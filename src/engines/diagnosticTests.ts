@@ -23,6 +23,8 @@ export function runEngineDiagnostics(): EngineDiagnosticResult[] {
     const c4 = extractLastDigit(7654.89, 0.01);
     const c5 = extractLastDigit(125.4, 0.001); // Trailing zeros -> 125.400 -> 0
     const c6 = extractLastDigit(99.1234, 0.0001); // 4 decimals -> 4
+    const c7 = extractLastDigit(5432.5, 2); // Deriv integer pip_size=2 -> 5432.50 -> 0
+    const c8 = extractLastDigit(98.765, 3); // Deriv integer pip_size=3 -> 5
 
     const ok =
       c1.lastDigit === 6 &&
@@ -33,7 +35,11 @@ export function runEngineDiagnostics(): EngineDiagnosticResult[] {
       c5.lastDigit === 0 &&
       c5.formattedQuote === '125.400' &&
       c6.lastDigit === 4 &&
-      pipSizeToDecimals(0.0001) === 4;
+      c7.lastDigit === 0 &&
+      c7.formattedQuote === '5432.50' &&
+      c8.lastDigit === 5 &&
+      pipSizeToDecimals(0.0001) === 4 &&
+      pipSizeToDecimals(4) === 4;
 
     results.push({
       name: 'Digit Precision & Trailing Zero Extraction',

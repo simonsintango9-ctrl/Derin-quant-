@@ -12,9 +12,18 @@ export function loadUserSettings(): UserSettings {
     const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (!raw) return DEFAULT_USER_SETTINGS;
     const parsed = JSON.parse(raw) as Partial<UserSettings>;
+    const validOrder = DEFAULT_USER_SETTINGS.signalCardOrder;
+    const rawOrder = Array.isArray(parsed.signalCardOrder) ? parsed.signalCardOrder : [];
+    const sanitizedOrder =
+      rawOrder.length === validOrder.length &&
+      validOrder.every((cat) => rawOrder.includes(cat))
+        ? rawOrder
+        : validOrder;
+
     return {
       ...DEFAULT_USER_SETTINGS,
       ...parsed,
+      signalCardOrder: sanitizedOrder,
       chartVisibility: {
         ...DEFAULT_USER_SETTINGS.chartVisibility,
         ...(parsed.chartVisibility || {}),

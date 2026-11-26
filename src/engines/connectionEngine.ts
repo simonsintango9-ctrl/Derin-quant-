@@ -1,11 +1,12 @@
-import { DERIV_WS_ENDPOINT, MARKET_MAP } from '../constants/markets';
+import { DERIV_WS_ENDPOINT, DERIV_WS_ENDPOINTS, MARKET_MAP } from '../constants/markets';
 import { ConnectionStatusInfo, MarketSymbol, TickRecord } from '../types/deriv';
-import { normalizeDerivTick } from './digitExtractionEngine';
+import { normalizeDerivTick, resolvePipPrecision } from './digitExtractionEngine';
 
 export interface ActiveSymbolInfo {
   symbol: string;
   display_name: string;
-  pip: number;
+  pip?: number;
+  pip_size?: number;
   exchange_is_open: number;
 }
 
@@ -27,6 +28,7 @@ export class DerivConnectionEngine {
   private ws: WebSocket | null = null;
   private appId: string;
   private autoReconnect: boolean;
+  private historyCount: number;
   private callbacks: ConnectionCallbacks;
 
   private status: ConnectionStatusInfo;
@@ -34,6 +36,7 @@ export class DerivConnectionEngine {
   private reconnectTimer: number | null = null;
   private pingTimer: number | null = null;
   private pingSentAt: number | null = null;
+  private endpointIndex = 0;
 
   private reqIdCounter = 1;
   private pendingRequests = new Map<number, PendingRequest>();
@@ -46,11 +49,13 @@ export class DerivConnectionEngine {
     appId: string,
     initialMarket: MarketSymbol,
     autoReconnect: boolean,
-    callbacks: ConnectionCallbacks
+    callbacks: ConnectionCallbacks,
+    historyCount = 1000
   ) {
     this.appId = appId;
     this.activeSymbol = initialMarket;
     this.autoReconnect = autoReconnect;
+    this.historyCount = Math.max(100, Math.min(5000, historyCount));
     this.callbacks = callbacks;
 
     this.status = {
@@ -69,13 +74,20 @@ export class DerivConnectionEngine {
     return { ...this.status };
   }
 
-  public updateConfig(appId: string, autoReconnect: boolean): void {
-    const appChanged = this.appId !== appId;
-    this.appId = appId;
+  public updateConfig(appId: string, autoReconnect: boolean, historyCount?: number): void {
+    const cleanAppId = appId.trim() || '1089';
+    const appChanged = this.appId !== cleanAppId;
+    this.appId = cleanAppId;
     this.autoReconnect = autoReconnect;
-    this.status.appId = appId;
+    if (historyCount !== undefined) {
+      this.historyCount = Math.max(100, Math.min(5000, historyCount));
+    }
+    this.status.appId = cleanAppId;
 
-    if (appChanged && (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING)) {
+    if (
+      appChanged &&
+      (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING)
+    ) {
       this.disconnect();
       this.connect(this.activeSymbol);
     }
@@ -89,18 +101,25 @@ export class DerivConnectionEngine {
     this.manualDisconnect = false;
     this.clearReconnectTimer();
 
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.ws &&
+      (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
 
     const sanitizedAppId = this.appId.trim() || '1089';
-    const url = `${DERIV_WS_ENDPOINT}?app_id=${encodeURIComponent(sanitizedAppId)}`;
+    const endpoint = DERIV_WS_ENDPOINTS[this.endpointIndex % DERIV_WS_ENDPOINTS.length];
+    const url = `${endpoint}?app_id=${encodeURIComponent(sanitizedAppId)}`;
 
     this.updateStatus({
       state: this.status.reconnectAttempt > 0 ? 'reconnecting' : 'connecting',
       appId: sanitizedAppId,
+      endpoint,
       errorMessage: null,
     });
+
+    let openedOnce = false;
 
     try {
       const socket = new WebSocket(url);
@@ -108,8 +127,10 @@ export class DerivConnectionEngine {
 
       socket.onopen = () => {
         if (this.ws !== socket) return;
+        openedOnce = true;
         this.updateStatus({
           state: 'connected',
+          endpoint,
           reconnectAttempt: 0,
           errorMessage: null,
           lastMessageAt: Date.now(),
@@ -125,7 +146,9 @@ export class DerivConnectionEngine {
 
       socket.onerror = () => {
         if (this.ws !== socket) return;
-        this.callbacks.onError('WebSocket transport error communicating with Deriv API.');
+        if (this.status.reconnectAttempt === 0) {
+          this.callbacks.onError(`WebSocket transport error connecting to ${endpoint}`);
+        }
       };
 
       socket.onclose = (event) => {
@@ -140,6 +163,11 @@ export class DerivConnectionEngine {
             reconnectAttempt: 0,
           });
           return;
+        }
+
+        // Rotate to fallback Deriv endpoint if handshake never succeeded
+        if (!openedOnce) {
+          this.endpointIndex = (this.endpointIndex + 1) % DERIV_WS_ENDPOINTS.length;
         }
 
         const reason = event.reason || `Connection closed (code ${event.code})`;
@@ -160,6 +188,13 @@ export class DerivConnectionEngine {
       });
       this.callbacks.onError(msg);
     }
+  }
+
+  public reconnectNow(market?: MarketSymbol): void {
+    this.disconnect();
+    this.endpointIndex = 0;
+    this.status.reconnectAttempt = 0;
+    this.connect(market ?? this.activeSymbol);
   }
 
   public disconnect(): void {
@@ -188,20 +223,23 @@ export class DerivConnectionEngine {
     });
   }
 
-  public async switchMarket(symbol: MarketSymbol, historyCount = 1000): Promise<void> {
+  public async switchMarket(symbol: MarketSymbol, historyCount?: number): Promise<void> {
     this.activeSymbol = symbol;
+    this.currentSubscriptionId = null;
+    if (historyCount !== undefined) {
+      this.historyCount = Math.max(100, Math.min(5000, historyCount));
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
     try {
       await this.sendRequest({ forget_all: 'ticks' });
-      this.currentSubscriptionId = null;
     } catch {
       // Continue subscribing even if forget_all had nothing active
     }
 
-    await this.subscribeToMarketTicks(symbol, historyCount);
+    await this.subscribeToMarketTicks(symbol, this.historyCount);
   }
 
   public async fetchSnapshotHistory(symbol: MarketSymbol, count = 200): Promise<TickRecord[]> {
@@ -221,55 +259,100 @@ export class DerivConnectionEngine {
   }
 
   private async bootstrapSession(): Promise<void> {
-    try {
-      // 1. Validate supported synthetic symbols against Deriv active_symbols
-      const symRes = await this.sendRequest({
-        active_symbols: 'brief',
-        product_type: 'basic',
-      });
+    const validateSymbols = async () => {
+      try {
+        const symRes = await this.sendRequest({
+          active_symbols: 'brief',
+          product_type: 'basic',
+        });
 
-      const activeList = (symRes.active_symbols as ActiveSymbolInfo[] | undefined) || [];
-      const validated = new Map<MarketSymbol, ActiveSymbolInfo>();
+        const activeList = (symRes.active_symbols as ActiveSymbolInfo[] | undefined) || [];
+        const validated = new Map<MarketSymbol, ActiveSymbolInfo>();
 
-      for (const item of activeList) {
-        if (item.symbol in MARKET_MAP) {
-          const sym = item.symbol as MarketSymbol;
-          validated.set(sym, item);
-          if (typeof item.pip === 'number' && item.pip > 0) {
-            this.symbolPipMap.set(sym, item.pip);
+        for (const item of activeList) {
+          if (item.symbol in MARKET_MAP) {
+            const sym = item.symbol as MarketSymbol;
+            validated.set(sym, item);
+            const rawPip = item.pip_size ?? item.pip;
+            if (typeof rawPip === 'number' && rawPip > 0) {
+              this.symbolPipMap.set(sym, resolvePipPrecision(rawPip).pipSize);
+            }
           }
         }
+
+        this.updateStatus({ validatedSymbolCount: validated.size });
+        this.callbacks.onActiveSymbolsValidated(validated);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to validate active symbols';
+        this.callbacks.onError(msg);
       }
+    };
 
-      this.updateStatus({ validatedSymbolCount: validated.size });
-      this.callbacks.onActiveSymbolsValidated(validated);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to validate active symbols';
-      this.callbacks.onError(msg);
-    }
+    const subscribeTicks = async () => {
+      try {
+        await this.subscribeToMarketTicks(this.activeSymbol, this.historyCount);
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : `Failed to subscribe to ${this.activeSymbol}`;
+        this.callbacks.onError(msg);
+      }
+    };
 
-    // 2. Subscribe to currently selected market
-    try {
-      await this.subscribeToMarketTicks(this.activeSymbol, 1000);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : `Failed to subscribe to ${this.activeSymbol}`;
-      this.callbacks.onError(msg);
-    }
+    // Start live tick subscription immediately in parallel with symbol validation
+    await Promise.allSettled([subscribeTicks(), validateSymbols()]);
   }
 
   private async subscribeToMarketTicks(symbol: MarketSymbol, count = 1000): Promise<void> {
-    const res = await this.sendRequest({
-      ticks_history: symbol,
-      adjust_start_time: 1,
-      count,
-      end: 'latest',
-      style: 'ticks',
-      subscribe: 1,
-    });
+    let res: Record<string, unknown>;
+    try {
+      res = await this.sendRequest({
+        ticks_history: symbol,
+        adjust_start_time: 1,
+        count,
+        end: 'latest',
+        style: 'ticks',
+        subscribe: 1,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.toLowerCase().includes('already subscribed')) {
+        await this.sendRequest({ forget_all: 'ticks' }).catch(() => {});
+        res = await this.sendRequest({
+          ticks_history: symbol,
+          adjust_start_time: 1,
+          count,
+          end: 'latest',
+          style: 'ticks',
+          subscribe: 1,
+        });
+      } else {
+        throw err;
+      }
+    }
+
+    // Guard against stale rapid market-switch resolution
+    if (this.activeSymbol !== symbol) {
+      const staleSub = res.subscription as { id?: string } | undefined;
+      if (staleSub?.id && this.ws?.readyState === WebSocket.OPEN) {
+        void this.sendRequest({ forget: staleSub.id }).catch(() => {});
+      }
+      return;
+    }
 
     const sub = res.subscription as { id?: string } | undefined;
     if (sub?.id) {
       this.currentSubscriptionId = sub.id;
+    } else if (this.activeSymbol === symbol && this.ws?.readyState === WebSocket.OPEN) {
+      // Fallback: guarantee live tick stream subscription if ticks_history omitted subscription
+      try {
+        const liveRes = await this.sendRequest({ ticks: symbol, subscribe: 1 });
+        const liveSub = liveRes.subscription as { id?: string } | undefined;
+        if (liveSub?.id && this.activeSymbol === symbol) {
+          this.currentSubscriptionId = liveSub.id;
+        }
+      } catch {
+        // Ignore fallback failure if already streaming
+      }
     }
 
     const ticks = this.parseHistoryResponse(symbol, res);
@@ -277,12 +360,20 @@ export class DerivConnectionEngine {
   }
 
   private parseHistoryResponse(symbol: MarketSymbol, res: Record<string, unknown>): TickRecord[] {
-    const history = res.history as { prices?: Array<number | string>; times?: Array<number | string> } | undefined;
-    const pipSize =
-      typeof res.pip_size === 'number' && res.pip_size > 0
-        ? res.pip_size
-        : this.symbolPipMap.get(symbol) ?? MARKET_MAP[symbol].defaultPipSize;
+    const history = res.history as
+      | { prices?: Array<number | string>; times?: Array<number | string>; pip_size?: number | string }
+      | undefined;
 
+    const topPip = Number(res.pip_size);
+    const histPip = Number(history?.pip_size);
+    const rawPip =
+      Number.isFinite(topPip) && topPip > 0
+        ? topPip
+        : Number.isFinite(histPip) && histPip > 0
+          ? histPip
+          : this.symbolPipMap.get(symbol) ?? MARKET_MAP[symbol].defaultPipSize;
+
+    const pipSize = resolvePipPrecision(rawPip).pipSize;
     this.symbolPipMap.set(symbol, pipSize);
 
     if (!history || !Array.isArray(history.prices) || !Array.isArray(history.times)) {
@@ -320,14 +411,12 @@ export class DerivConnectionEngine {
     const now = Date.now();
     this.status.lastMessageAt = now;
 
-    // Handle ping response latency
     if (data.msg_type === 'ping' && this.pingSentAt !== null) {
       const latencyMs = Math.max(1, now - this.pingSentAt);
       this.pingSentAt = null;
       this.updateStatus({ latencyMs, lastMessageAt: now });
     }
 
-    // Resolve RPC request if req_id matches
     const reqId = typeof data.req_id === 'number' ? data.req_id : null;
     if (reqId !== null && this.pendingRequests.has(reqId)) {
       const pending = this.pendingRequests.get(reqId)!;
@@ -343,7 +432,6 @@ export class DerivConnectionEngine {
       return;
     }
 
-    // Handle streaming error outside RPC
     if (data.error) {
       const errObj = data.error as { message?: string };
       const msg = errObj.message || 'Deriv stream error';
@@ -352,7 +440,6 @@ export class DerivConnectionEngine {
       return;
     }
 
-    // Handle live tick stream
     if (data.msg_type === 'tick' && data.tick) {
       const rawTick = data.tick as {
         symbol?: string;
@@ -365,7 +452,6 @@ export class DerivConnectionEngine {
       const sym = (rawTick.symbol || this.activeSymbol) as MarketSymbol;
       if (!(sym in MARKET_MAP)) return;
 
-      // Ignore ticks from stale unsubscribed streams if active symbol changed
       if (sym !== this.activeSymbol) return;
       if (this.currentSubscriptionId && rawTick.id && rawTick.id !== this.currentSubscriptionId) {
         return;
@@ -380,7 +466,10 @@ export class DerivConnectionEngine {
     }
   }
 
-  private sendRequest(payload: Record<string, unknown>, timeoutMs = 12000): Promise<Record<string, unknown>> {
+  private sendRequest(
+    payload: Record<string, unknown>,
+    timeoutMs = 12000
+  ): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error('WebSocket is not open'));

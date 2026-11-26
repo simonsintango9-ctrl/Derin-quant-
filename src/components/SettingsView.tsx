@@ -21,6 +21,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   const [diagnostics, setDiagnostics] = useState<EngineDiagnosticResult[] | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [appIdDraft, setAppIdDraft] = useState(settings.appId);
+
+  const handleApplyAppId = () => {
+    const clean = appIdDraft.trim() || '1089';
+    setAppIdDraft(clean);
+    onUpdateSettings({ ...settings, appId: clean });
+  };
 
   const handleRunDiagnostics = () => {
     setDiagnostics(runEngineDiagnostics());
@@ -50,21 +57,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
 
           <div className="space-y-4 text-xs">
-            <label className="block space-y-1.5">
-              <span className="text-slate-700 dark:text-slate-300 font-medium">Deriv App ID</span>
-              <input
-                type="text"
-                value={settings.appId}
-                onChange={(e) =>
-                  onUpdateSettings({ ...settings, appId: e.target.value })
-                }
-                placeholder="1089"
-                className="w-full rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 px-3 py-2 font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
-              />
+            <div className="space-y-1.5">
+              <label htmlFor="deriv-app-id" className="block text-slate-700 dark:text-slate-300 font-medium">
+                Deriv App ID
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="deriv-app-id"
+                  type="text"
+                  value={appIdDraft}
+                  onChange={(e) => setAppIdDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleApplyAppId();
+                  }}
+                  placeholder="1089"
+                  className="flex-1 rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 px-3 py-2 font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyAppId}
+                  disabled={appIdDraft.trim() === settings.appId}
+                  className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Apply
+                </button>
+              </div>
               <span className="block text-[11px] text-slate-500">
                 Default public Deriv App ID is 1089. Stored locally only.
               </span>
-            </label>
+            </div>
 
             <div className="grid grid-cols-2 gap-4">
               <label className="block space-y-1.5">
@@ -292,7 +313,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => onUpdateSettings(DEFAULT_USER_SETTINGS)}
+              onClick={() => {
+                setAppIdDraft(DEFAULT_USER_SETTINGS.appId);
+                onUpdateSettings(DEFAULT_USER_SETTINGS);
+              }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
             >
               <RotateCcw className="h-3.5 w-3.5" />

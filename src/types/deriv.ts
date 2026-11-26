@@ -302,8 +302,10 @@ export interface UserSettings {
   signalRefreshIntervalSeconds: number;
   markovAlphaSmoothing: number;
   autoReconnect: boolean;
+  autoGenerateSignals: boolean;
   notificationsEnabled: boolean;
   compactMode: boolean;
+  signalCardOrder: SignalCategory[];
   chartVisibility: ChartVisibilityConfig;
   thresholds: ClassificationThresholds;
 }

@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -6,6 +6,13 @@ import {
   ArrowUpRight,
   ChevronDown,
   Clock,
+  Pause,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Wifi,
+  WifiOff,
+  Zap,
 } from 'lucide-react';
 import { MARKET_MAP, SUPPORTED_MARKETS } from '../constants/markets';
 import {
@@ -44,8 +51,15 @@ interface TerminalViewProps {
   onSelectMarket: (symbol: MarketSymbol) => void;
   onChangeWindowPreset: (preset: WindowPreset) => void;
   onScanCategory: (category: SignalCategory) => void;
+  onGenerateAllSignals: () => void;
+  onToggleAutoGenerateSignals: () => void;
+  onReorderSignalCards: (nextOrder: SignalCategory[]) => void;
+  onToggleConnection: () => void;
+  onReconnectNow: () => void;
   onSwitchToLab: () => void;
 }
+
+const DEFAULT_SIGNAL_CARD_ORDER: SignalCategory[] = ['MATCHES', 'DIFFERS', 'EVEN', 'ODD'];
 
 export const TerminalView: React.FC<TerminalViewProps> = ({
   market,
@@ -59,8 +73,78 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   onSelectMarket,
   onChangeWindowPreset,
   onScanCategory,
+  onGenerateAllSignals,
+  onToggleAutoGenerateSignals,
+  onReorderSignalCards,
+  onToggleConnection,
+  onReconnectNow,
   onSwitchToLab,
 }) => {
+  const [draggedCategory, setDraggedCategory] = useState<SignalCategory | null>(null);
+  const [dragOverCategory, setDragOverCategory] = useState<SignalCategory | null>(null);
+
+  const cardOrder =
+    settings.signalCardOrder && settings.signalCardOrder.length === 4
+      ? settings.signalCardOrder
+      : DEFAULT_SIGNAL_CARD_ORDER;
+  const isCustomOrder = cardOrder.some((cat, idx) => cat !== DEFAULT_SIGNAL_CARD_ORDER[idx]);
+
+  const moveCard = (fromIndex: number, toIndex: number) => {
+    if (
+      fromIndex === toIndex ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= cardOrder.length ||
+      toIndex >= cardOrder.length
+    ) {
+      return;
+    }
+    const next = [...cardOrder];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onReorderSignalCards(next);
+  };
+
+  const handleCardDragStart = (
+    category: SignalCategory,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    setDraggedCategory(category);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', category);
+  };
+
+  const handleCardDragOver = (
+    category: SignalCategory,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverCategory !== category) {
+      setDragOverCategory(category);
+    }
+  };
+
+  const handleCardDrop = (
+    targetCategory: SignalCategory,
+    e: React.DragEvent<HTMLDivElement>
+  ) => {
+    e.preventDefault();
+    const sourceCategory =
+      draggedCategory ?? (e.dataTransfer.getData('text/plain') as SignalCategory);
+    if (sourceCategory && sourceCategory !== targetCategory) {
+      const fromIndex = cardOrder.indexOf(sourceCategory);
+      const toIndex = cardOrder.indexOf(targetCategory);
+      moveCard(fromIndex, toIndex);
+    }
+    setDraggedCategory(null);
+    setDragOverCategory(null);
+  };
+
+  const handleCardDragEnd = () => {
+    setDraggedCategory(null);
+    setDragOverCategory(null);
+  };
   const isDark = settings.theme === 'dark';
   const isConnected = connection.state === 'connected';
   const latestTick = ticks.length > 0 ? ticks[ticks.length - 1] : null;
@@ -85,8 +169,83 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     return { evenPct, oddPct, under5Pct, over4Pct };
   }, [stats.digits]);
 
+  const endpointHost = connection.endpoint.replace(/^wss?:\/\//, '').split('/')[0];
+  const isFeedTransitioning =
+    connection.state === 'connecting' || connection.state === 'reconnecting';
+  const feedStatusText =
+    connection.state === 'connected'
+      ? 'Live Feed Connected'
+      : connection.state === 'connecting'
+        ? 'Connecting to Deriv Feed...'
+        : connection.state === 'reconnecting'
+          ? `Reconnecting to Feed (Attempt #${connection.reconnectAttempt})...`
+          : connection.state === 'error'
+            ? 'Feed Connection Error'
+            : 'Feed Disconnected';
+
   return (
     <div className="space-y-6">
+      {/* Live Market Feed Connection Bar */}
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <span
+            className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+              isConnected
+                ? 'bg-emerald-500 animate-pulse'
+                : isFeedTransitioning
+                  ? 'bg-amber-500 animate-pulse'
+                  : connection.state === 'error'
+                    ? 'bg-rose-500'
+                    : 'bg-slate-400'
+            }`}
+          />
+          <div className="min-w-0">
+            <div className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+              {feedStatusText}
+            </div>
+            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums truncate">
+              {endpointHost} · App ID {connection.appId}
+              {connection.latencyMs ? ` · ${connection.latencyMs}ms` : ''}
+              {latestTick ? ` · Last tick ${new Date(latestTick.epoch * 1000).toLocaleTimeString()}` : ''}
+              {connection.errorMessage && !isConnected ? ` · ${connection.errorMessage}` : ''}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onReconnectNow}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFeedTransitioning ? 'animate-spin' : ''}`} />
+            <span>Reconnect</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={onToggleConnection}
+            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              isConnected || isFeedTransitioning
+                ? 'border border-slate-200 dark:border-slate-700 bg-white hover:bg-slate-100 dark:bg-[#090E17] dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+            }`}
+          >
+            {isConnected || isFeedTransitioning ? (
+              <>
+                <WifiOff className="h-3.5 w-3.5" />
+                <span>Disconnect</span>
+              </>
+            ) : (
+              <>
+                <Wifi className="h-3.5 w-3.5" />
+                <span>Connect Feed</span>
+              </>
+            )}
+          </button>
+        </div>
+      </section>
+
       {/* Top Row: Select Market (Left) + Live Price & Window Controls (Right) */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
         {/* Select Market Card matching screenshot */}
@@ -223,19 +382,61 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         </div>
       </section>
 
-      {/* DIGIT ANALYSIS: 2x2 Scan Grid matching video dashboard */}
+      {/* DIGIT ANALYSIS: Reorderable 2x2 / 4-col Scan Grid */}
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-slate-500 dark:text-slate-400">
-            Digit Analysis
-          </h2>
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-            Sample: {stats.windowSize} ticks · Statistical estimates only
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="font-display text-xs font-semibold tracking-wider uppercase text-slate-500 dark:text-slate-400">
+              Digit Analysis
+            </h2>
+            <span className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+              · {stats.windowSize} ticks
+            </span>
+            {isCustomOrder && (
+              <button
+                type="button"
+                onClick={() => onReorderSignalCards([...DEFAULT_SIGNAL_CARD_ORDER])}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 dark:border-slate-700 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset Order
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onToggleAutoGenerateSignals}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                settings.autoGenerateSignals
+                  ? 'border-emerald-500/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/35 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0E1522] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+              title="Automatically generate and refresh signals as live ticks arrive"
+            >
+              {settings.autoGenerateSignals ? (
+                <Pause className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              <span>Auto-Generate: {settings.autoGenerateSignals ? 'ON' : 'OFF'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onGenerateAllSignals}
+              disabled={ticks.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 disabled:cursor-not-allowed px-3 py-1.5 text-xs font-semibold text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span>Generate All</span>
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {(['MATCHES', 'DIFFERS', 'EVEN', 'ODD'] as SignalCategory[]).map((cat) => {
+          {cardOrder.map((cat, idx) => {
             const scanned = scannedCards[cat];
             return (
               <DigitScanCard
@@ -246,7 +447,22 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 scannedSignal={scanned?.signal ?? null}
                 secondsRemaining={scanned?.secondsRemaining ?? 0}
                 isConnected={isConnected}
+                index={idx}
+                totalCount={cardOrder.length}
+                isDragging={draggedCategory === cat}
+                isDragOver={dragOverCategory === cat && draggedCategory !== cat}
                 onScan={onScanCategory}
+                onMoveLeft={() => moveCard(idx, idx - 1)}
+                onMoveRight={() => moveCard(idx, idx + 1)}
+                onDragStart={handleCardDragStart}
+                onDragOver={handleCardDragOver}
+                onDragLeave={() => {
+                  if (dragOverCategory === cat) {
+                    setDragOverCategory(null);
+                  }
+                }}
+                onDrop={handleCardDrop}
+                onDragEnd={handleCardDragEnd}
               />
             );
           })}
@@ -386,12 +602,19 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           <div className="lg:col-span-4 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] p-5 flex flex-col">
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <Activity
+                  className={`h-4 w-4 ${
+                    isConnected
+                      ? 'text-emerald-600 dark:text-emerald-400 animate-pulse'
+                      : 'text-slate-400'
+                  }`}
+                />
                 <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   Live Tick Stream
                 </h3>
               </div>
               <span className="text-xs text-slate-500 font-mono tabular-nums">
+                {isConnected ? 'Live · ' : ''}
                 {ticks.length} ticks
               </span>
             </div>

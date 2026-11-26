@@ -1,6 +1,10 @@
 import { MarketDefinition, MarketSymbol, UserSettings } from '../types/deriv';
 
 export const DERIV_WS_ENDPOINT = 'wss://ws.derivws.com/websockets/v3';
+export const DERIV_WS_ENDPOINTS = [
+  'wss://ws.derivws.com/websockets/v3',
+  'wss://ws.binaryws.com/websockets/v3',
+] as const;
 export const DEFAULT_DERIV_APP_ID = '1089';
 
 export const SUPPORTED_MARKETS: MarketDefinition[] = [
@@ -95,8 +99,10 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   signalRefreshIntervalSeconds: 12,
   markovAlphaSmoothing: 0.5,
   autoReconnect: true,
+  autoGenerateSignals: true,
   notificationsEnabled: true,
   compactMode: false,
+  signalCardOrder: ['MATCHES', 'DIFFERS', 'EVEN', 'ODD'],
   chartVisibility: {
     digitFrequency: true,
     multiWindowComparison: true,

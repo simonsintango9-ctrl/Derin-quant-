@@ -139,7 +139,11 @@ export default function App() {
   useEffect(() => {
     tickEngineRef.current.setMaxBufferSize(settings.tickHistorySize);
     saveUserSettings(settings);
-    connectionRef.current?.updateConfig(settings.appId, settings.autoReconnect);
+    connectionRef.current?.updateConfig(
+      settings.appId,
+      settings.autoReconnect,
+      settings.tickHistorySize
+    );
   }, [settings]);
 
   // Initialize Deriv WebSocket Connection Engine
@@ -203,7 +207,8 @@ export default function App() {
         onError: (msg) => {
           pushToast('error', msg);
         },
-      }
+      },
+      settingsRef.current.tickHistorySize
     );
 
     connectionRef.current = engine;
@@ -310,6 +315,69 @@ export default function App() {
     },
     [liveSignals, pushToast, recordSignal]
   );
+
+  // Batch generate all 4 signal cards at once from current live tick models
+  const handleGenerateAllSignals = useCallback(() => {
+    const categories: SignalCategory[] = ['MATCHES', 'DIFFERS', 'EVEN', 'ODD'];
+    const cycleSeconds = settingsRef.current.signalRefreshIntervalSeconds;
+    const nextCards: Partial<Record<SignalCategory, ScannedCardState>> = {};
+    let count = 0;
+
+    for (const cat of categories) {
+      const candidate = liveSignals[cat];
+      if (candidate) {
+        nextCards[cat] = {
+          signal: candidate,
+          secondsRemaining: cycleSeconds,
+        };
+        recordSignal(candidate);
+        count++;
+      }
+    }
+
+    if (count === 0) {
+      pushToast('info', 'Waiting for market ticks before generating signals.');
+      return;
+    }
+
+    setScannedCards(nextCards);
+  }, [liveSignals, pushToast, recordSignal]);
+
+  // Auto-generate and refresh signals when live ticks arrive and Auto-Generate is enabled
+  useEffect(() => {
+    if (!settings.autoGenerateSignals) return;
+    if (!liveSignals.MATCHES || !liveSignals.DIFFERS || !liveSignals.EVEN || !liveSignals.ODD) {
+      return;
+    }
+
+    const categories: SignalCategory[] = ['MATCHES', 'DIFFERS', 'EVEN', 'ODD'];
+    const hasMissing = categories.some((cat) => !scannedCards[cat]);
+    const hasExpired = categories.some(
+      (cat) => scannedCards[cat] && scannedCards[cat]!.secondsRemaining <= 0
+    );
+
+    if (hasMissing || hasExpired) {
+      const cycleSeconds = Math.max(5, settings.signalRefreshIntervalSeconds || 12);
+      const nextCards: Partial<Record<SignalCategory, ScannedCardState>> = {};
+      for (const cat of categories) {
+        const candidate = liveSignals[cat];
+        if (candidate) {
+          nextCards[cat] = {
+            signal: candidate,
+            secondsRemaining: cycleSeconds,
+          };
+          recordSignal(candidate);
+        }
+      }
+      setScannedCards(nextCards);
+    }
+  }, [
+    settings.autoGenerateSignals,
+    settings.signalRefreshIntervalSeconds,
+    liveSignals,
+    scannedCards,
+    recordSignal,
+  ]);
 
   // Clean 1-second countdown timer for scanned cards (zero volatile dependencies)
   useEffect(() => {
@@ -427,11 +495,16 @@ export default function App() {
       }
       setTicksVersion((v) => v + 1);
 
-      if (connectionRef.current && connectionStatus.state === 'connected') {
-        await connectionRef.current.switchMarket(nextMarket, settings.tickHistorySize);
+      if (connectionRef.current) {
+        try {
+          await connectionRef.current.switchMarket(nextMarket, settings.tickHistorySize);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : `Failed to switch to ${nextMarket}`;
+          pushToast('error', msg);
+        }
       }
     },
-    [settings.selectedMarket, settings.tickHistorySize, connectionStatus.state]
+    [settings.selectedMarket, settings.tickHistorySize, pushToast]
   );
 
   const handleToggleConnection = () => {
@@ -583,7 +656,7 @@ export default function App() {
 
           {/* Header Controls: Real Connection Status, Theme Toggle, Connect Action */}
           <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden sm:flex items-center gap-1.5 text-xs font-mono text-slate-500 dark:text-slate-400 mr-1 tabular-nums">
+            <div className="flex items-center gap-1.5 text-xs font-mono text-slate-500 dark:text-slate-400 mr-1 tabular-nums">
               <span
                 className={`h-2 w-2 rounded-full ${
                   connectionStatus.state === 'connected'
@@ -690,6 +763,20 @@ export default function App() {
               setSettings((prev) => ({ ...prev, analysisWindowPreset: preset }))
             }
             onScanCategory={handleScanCategory}
+            onGenerateAllSignals={handleGenerateAllSignals}
+            onToggleAutoGenerateSignals={() =>
+              setSettings((prev) => ({
+                ...prev,
+                autoGenerateSignals: !prev.autoGenerateSignals,
+              }))
+            }
+            onReorderSignalCards={(nextOrder) =>
+              setSettings((prev) => ({ ...prev, signalCardOrder: nextOrder }))
+            }
+            onToggleConnection={handleToggleConnection}
+            onReconnectNow={() =>
+              connectionRef.current?.reconnectNow(settings.selectedMarket)
+            }
             onSwitchToLab={() => setActiveTab('analysis')}
           />
         )}

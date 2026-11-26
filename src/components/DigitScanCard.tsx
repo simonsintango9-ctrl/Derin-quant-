@@ -1,5 +1,5 @@
 import React from 'react';
-import { Hash, RotateCw, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, GripVertical, Hash, RotateCw, Zap } from 'lucide-react';
 import {
   MarketSymbol,
   QuantSignal,
@@ -15,7 +15,18 @@ interface DigitScanCardProps {
   scannedSignal: QuantSignal | null;
   secondsRemaining: number;
   isConnected: boolean;
+  index: number;
+  totalCount: number;
+  isDragging?: boolean;
+  isDragOver?: boolean;
   onScan: (category: SignalCategory) => void;
+  onMoveLeft?: () => void;
+  onMoveRight?: () => void;
+  onDragStart?: (category: SignalCategory, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragOver?: (category: SignalCategory, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragLeave?: () => void;
+  onDrop?: (targetCategory: SignalCategory, e: React.DragEvent<HTMLDivElement>) => void;
+  onDragEnd?: () => void;
 }
 
 interface HeatmapStyle {
@@ -94,7 +105,18 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
   scannedSignal,
   secondsRemaining,
   isConnected,
+  index,
+  totalCount,
+  isDragging = false,
+  isDragOver = false,
   onScan,
+  onMoveLeft,
+  onMoveRight,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
 }) => {
   const marketName = MARKET_MAP[market].name;
   const hasScanned = scannedSignal !== null;
@@ -108,28 +130,72 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
   const heatmap = getReliabilityHeatmapStyle(reliabilityTier);
 
   return (
-    <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] p-4 flex flex-col justify-between gap-3.5 transition-colors">
+    <div
+      draggable
+      onDragStart={(e) => onDragStart?.(category, e)}
+      onDragOver={(e) => onDragOver?.(category, e)}
+      onDragLeave={onDragLeave}
+      onDrop={(e) => onDrop?.(category, e)}
+      onDragEnd={onDragEnd}
+      aria-label={`${category} signal card, position ${index + 1} of ${totalCount}`}
+      className={`rounded-2xl border p-3.5 sm:p-4 flex flex-col justify-between gap-3.5 transition-all select-none ${
+        isDragOver
+          ? 'border-emerald-500 ring-2 ring-emerald-500/60 bg-emerald-50/40 dark:bg-emerald-950/25'
+          : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522]'
+      } ${isDragging ? 'opacity-50 scale-[0.98]' : ''}`}
+    >
       {/* Card Header */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 shrink-0">
-            <Hash className="h-4 w-4" />
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+          <span
+            title="Drag card to reorder"
+            className="hidden sm:inline-flex items-center justify-center text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-grab active:cursor-grabbing shrink-0"
+          >
+            <GripVertical className="h-4 w-4" />
           </span>
-          <span className="font-display text-sm font-bold tracking-wide text-slate-800 dark:text-slate-100">
+          <span className="inline-flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 shrink-0">
+            <Hash className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+          </span>
+          <span className="font-display text-xs sm:text-sm font-bold tracking-wide text-slate-800 dark:text-slate-100 truncate">
             {category}
           </span>
         </div>
 
-        <span
-          className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-            isConnected
-              ? isActive
-                ? 'bg-emerald-500 animate-pulse'
-                : 'bg-emerald-500'
-              : 'bg-slate-300 dark:bg-slate-700'
-          }`}
-          title={isConnected ? 'Live stream active' : 'Disconnected'}
-        />
+        <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={onMoveLeft}
+              disabled={index <= 0}
+              aria-label={`Move ${category} earlier`}
+              title="Move earlier"
+              className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onMoveRight}
+              disabled={index >= totalCount - 1}
+              aria-label={`Move ${category} later`}
+              title="Move later"
+              className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:text-slate-500 dark:hover:text-slate-200 dark:hover:bg-slate-800 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <span
+            className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+              isConnected
+                ? isActive
+                  ? 'bg-emerald-500 animate-pulse'
+                  : 'bg-emerald-500'
+                : 'bg-slate-300 dark:bg-slate-700'
+            }`}
+            title={isConnected ? 'Live stream active' : 'Disconnected'}
+          />
+        </div>
       </div>
 
       {/* Result Display or Market Prompt */}
@@ -191,19 +257,37 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
             </div>
           </div>
 
-          {isMatchesOrDiffers && signal ? (
+          {signal ? (
             <div
-              className={`rounded-xl border px-3 py-2.5 transition-colors ${heatmap.containerClass}`}
+              className={`rounded-xl border px-3 py-2.5 transition-colors ${
+                isMatchesOrDiffers
+                  ? heatmap.containerClass
+                  : 'border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-[#090E17] text-slate-900 dark:text-slate-100'
+              }`}
             >
               <div className="flex items-baseline justify-between gap-2">
-                <span className={`text-[11px] font-medium ${heatmap.subtextClass}`}>
-                  Est. Probability (Digit {signal.targetDigit})
+                <span
+                  className={`text-[11px] font-medium ${
+                    isMatchesOrDiffers
+                      ? heatmap.subtextClass
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {isMatchesOrDiffers
+                    ? `Est. Probability (Digit ${signal.targetDigit})`
+                    : `Est. ${category} Parity`}
                 </span>
                 <span className="font-mono text-base font-bold tabular-nums">
                   {(signal.estimatedProbability * 100).toFixed(1)}%
                 </span>
               </div>
-              <div className={`mt-0.5 flex items-center justify-between text-[11px] ${heatmap.subtextClass}`}>
+              <div
+                className={`mt-0.5 flex items-center justify-between text-[11px] ${
+                  isMatchesOrDiffers
+                    ? heatmap.subtextClass
+                    : 'text-slate-500 dark:text-slate-400'
+                }`}
+              >
                 <span>{signal.statisticalReliability}</span>
                 <span className="font-mono tabular-nums">n={signal.sampleSize}</span>
               </div>
@@ -211,8 +295,8 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
           ) : (
             <div className="text-[11px] text-slate-500 dark:text-slate-400 pt-1">
               {isConnected
-                ? 'Tap Scan to evaluate live statistical distribution'
-                : 'Connect feed to run digit scan'}
+                ? 'Buffering live market ticks...'
+                : 'Connect feed to stream live ticks'}
             </div>
           )}
         </div>
@@ -251,10 +335,12 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
       <button
         type="button"
         onClick={() => onScan(category)}
-        disabled={!isConnected}
+        disabled={!signal}
         className="w-full min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] disabled:opacity-45 disabled:cursor-not-allowed text-white text-sm font-semibold transition-all cursor-pointer"
       >
-        {hasScanned ? (
+        {!signal ? (
+          <span>{isConnected ? 'Waiting for ticks...' : 'Connect to Scan'}</span>
+        ) : hasScanned ? (
           <>
             <RotateCw className="h-4 w-4" />
             Scan Again
