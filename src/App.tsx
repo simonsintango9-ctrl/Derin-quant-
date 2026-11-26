@@ -97,11 +97,6 @@ export default function App() {
   signalRecordsRef.current = signalRecords;
   settingsRef.current = settings;
 
-  const effectiveWindowSize =
-    settings.analysisWindowPreset === 'custom'
-      ? settings.customWindowSize
-      : settings.analysisWindowPreset;
-
   const pushToast = useCallback((type: 'error' | 'info', message: string) => {
     if (!settingsRef.current.notificationsEnabled && type === 'info') return;
     setNotification({ type, message });
@@ -225,6 +220,35 @@ export default function App() {
     void ticksVersion;
     return tickEngineRef.current.getTicks(settings.selectedMarket);
   }, [settings.selectedMarket, ticksVersion]);
+
+  const effectiveWindowSize = useMemo(() => {
+    if (settings.analysisMode === 'duration') {
+      if (activeTicks.length === 0) {
+        return Math.max(10, Math.min(2000, settings.analysisDurationSeconds));
+      }
+      const latestEpoch = activeTicks[activeTicks.length - 1].epoch;
+      const cutoffEpoch = latestEpoch - settings.analysisDurationSeconds;
+      let count = 0;
+      for (let i = activeTicks.length - 1; i >= 0; i--) {
+        if (activeTicks[i].epoch >= cutoffEpoch) {
+          count++;
+        } else {
+          break;
+        }
+      }
+      return Math.max(1, count);
+    }
+
+    return settings.analysisWindowPreset === 'custom'
+      ? settings.customWindowSize
+      : settings.analysisWindowPreset;
+  }, [
+    settings.analysisMode,
+    settings.analysisDurationSeconds,
+    settings.analysisWindowPreset,
+    settings.customWindowSize,
+    activeTicks,
+  ]);
 
   const stats = useMemo(
     () => runStatisticalAnalysis(settings.selectedMarket, activeTicks, effectiveWindowSize),
@@ -759,8 +783,36 @@ export default function App() {
             scannedCards={scannedCards}
             settings={settings}
             onSelectMarket={(sym) => void handleMarketSwitch(sym)}
+            onChangeAnalysisMode={(mode) =>
+              setSettings((prev) => ({ ...prev, analysisMode: mode }))
+            }
             onChangeWindowPreset={(preset) =>
-              setSettings((prev) => ({ ...prev, analysisWindowPreset: preset }))
+              setSettings((prev) => ({
+                ...prev,
+                analysisMode: 'ticks',
+                analysisWindowPreset: preset,
+              }))
+            }
+            onChangeCustomWindowSize={(size) =>
+              setSettings((prev) => ({
+                ...prev,
+                analysisMode: 'ticks',
+                analysisWindowPreset: 'custom',
+                customWindowSize: Math.max(10, Math.min(2000, size)),
+              }))
+            }
+            onChangeDurationSeconds={(seconds) =>
+              setSettings((prev) => ({
+                ...prev,
+                analysisMode: 'duration',
+                analysisDurationSeconds: Math.max(10, Math.min(3600, seconds)),
+              }))
+            }
+            onChangeSignalDuration={(seconds) =>
+              setSettings((prev) => ({
+                ...prev,
+                signalRefreshIntervalSeconds: Math.max(5, Math.min(300, seconds)),
+              }))
             }
             onScanCategory={handleScanCategory}
             onGenerateAllSignals={handleGenerateAllSignals}

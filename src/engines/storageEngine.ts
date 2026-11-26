@@ -23,6 +23,15 @@ export function loadUserSettings(): UserSettings {
     return {
       ...DEFAULT_USER_SETTINGS,
       ...parsed,
+      analysisMode:
+        parsed.analysisMode === 'duration' || parsed.analysisMode === 'ticks'
+          ? parsed.analysisMode
+          : DEFAULT_USER_SETTINGS.analysisMode,
+      analysisDurationSeconds:
+        typeof parsed.analysisDurationSeconds === 'number' &&
+        Number.isFinite(parsed.analysisDurationSeconds)
+          ? Math.max(10, Math.min(3600, Math.round(parsed.analysisDurationSeconds)))
+          : DEFAULT_USER_SETTINGS.analysisDurationSeconds,
       signalCardOrder: sanitizedOrder,
       chartVisibility: {
         ...DEFAULT_USER_SETTINGS.chartVisibility,

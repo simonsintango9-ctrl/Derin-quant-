@@ -113,18 +113,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <label className="block space-y-1.5">
                 <span className="text-slate-700 dark:text-slate-300 font-medium">
-                  Custom Window Size
+                  Custom Tick Window Size
                 </span>
                 <input
                   type="number"
-                  min={20}
+                  min={10}
                   max={2000}
                   value={settings.customWindowSize}
                   onChange={(e) =>
                     onUpdateSettings({
                       ...settings,
                       customWindowSize: Math.max(
-                        20,
+                        10,
                         Math.min(2000, Number(e.target.value) || 150)
                       ),
                     })
@@ -134,7 +134,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </label>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <label className="block space-y-1.5">
+                <span className="text-slate-700 dark:text-slate-300 font-medium">
+                  Analysis Duration (sec)
+                </span>
+                <input
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={settings.analysisDurationSeconds}
+                  onChange={(e) =>
+                    onUpdateSettings({
+                      ...settings,
+                      analysisDurationSeconds: Math.max(
+                        10,
+                        Math.min(3600, Number(e.target.value) || 120)
+                      ),
+                    })
+                  }
+                  className="w-full rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 px-3 py-2 font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </label>
+
               <label className="block space-y-1.5">
                 <span className="text-slate-700 dark:text-slate-300 font-medium">
                   Signal Refresh Cycle (sec)
@@ -142,14 +164,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input
                   type="number"
                   min={5}
-                  max={120}
+                  max={300}
                   value={settings.signalRefreshIntervalSeconds}
                   onChange={(e) =>
                     onUpdateSettings({
                       ...settings,
                       signalRefreshIntervalSeconds: Math.max(
                         5,
-                        Math.min(120, Number(e.target.value) || 12)
+                        Math.min(300, Number(e.target.value) || 12)
                       ),
                     })
                   }

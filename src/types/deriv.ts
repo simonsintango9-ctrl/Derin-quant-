@@ -53,7 +53,8 @@ export interface TickRecord {
   subscriptionId?: string;
 }
 
-export type WindowPreset = 50 | 100 | 200 | 'custom';
+export type WindowPreset = 25 | 50 | 100 | 200 | 500 | 'custom';
+export type AnalysisMode = 'ticks' | 'duration';
 
 export interface DigitMetric {
   digit: number;
@@ -296,8 +297,10 @@ export interface UserSettings {
   selectedMarket: MarketSymbol;
   theme: 'light' | 'dark';
   tickHistorySize: number;
+  analysisMode: AnalysisMode;
   analysisWindowPreset: WindowPreset;
   customWindowSize: number;
+  analysisDurationSeconds: number;
   scannerIntervalSeconds: number;
   signalRefreshIntervalSeconds: number;
   markovAlphaSmoothing: number;

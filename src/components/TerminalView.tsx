@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { MARKET_MAP, SUPPORTED_MARKETS } from '../constants/markets';
 import {
+  AnalysisMode,
   ConnectionStatusInfo,
   MarketSymbol,
   ProbabilityReport,
@@ -49,7 +50,11 @@ interface TerminalViewProps {
   scannedCards: Partial<Record<SignalCategory, ScannedCardState>>;
   settings: UserSettings;
   onSelectMarket: (symbol: MarketSymbol) => void;
+  onChangeAnalysisMode: (mode: AnalysisMode) => void;
   onChangeWindowPreset: (preset: WindowPreset) => void;
+  onChangeCustomWindowSize: (ticks: number) => void;
+  onChangeDurationSeconds: (seconds: number) => void;
+  onChangeSignalDuration: (seconds: number) => void;
   onScanCategory: (category: SignalCategory) => void;
   onGenerateAllSignals: () => void;
   onToggleAutoGenerateSignals: () => void;
@@ -71,7 +76,11 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   scannedCards,
   settings,
   onSelectMarket,
+  onChangeAnalysisMode,
   onChangeWindowPreset,
+  onChangeCustomWindowSize,
+  onChangeDurationSeconds,
+  onChangeSignalDuration,
   onScanCategory,
   onGenerateAllSignals,
   onToggleAutoGenerateSignals,
@@ -349,35 +358,134 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex items-center gap-1.5 font-mono text-xs tabular-nums overflow-x-auto">
-              <span className="text-slate-400 mr-1">Recent:</span>
-              {ticks.slice(-8).map((t) => (
-                <span
-                  key={t.epoch}
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold"
-                >
-                  {t.lastDigit}
-                </span>
-              ))}
-            </div>
+          <div className="space-y-3 pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 font-mono text-xs tabular-nums overflow-x-auto">
+                <span className="text-slate-400 mr-1">Recent:</span>
+                {ticks.slice(-8).map((t) => (
+                  <span
+                    key={t.epoch}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-slate-100 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 font-semibold"
+                  >
+                    {t.lastDigit}
+                  </span>
+                ))}
+              </div>
 
-            <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800">
-              {([50, 100, 200, 'custom'] as WindowPreset[]).map((preset) => (
+              {/* Analysis Scope Mode Toggle: Number of Ticks vs Time Duration */}
+              <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800">
                 <button
-                  key={String(preset)}
                   type="button"
-                  onClick={() => onChangeWindowPreset(preset)}
-                  className={`px-2.5 py-1 text-xs font-mono rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                    settings.analysisWindowPreset === preset
+                  onClick={() => onChangeAnalysisMode('ticks')}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    settings.analysisMode === 'ticks'
                       ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
                       : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                   }`}
                 >
-                  {preset === 'custom' ? `${settings.customWindowSize}t` : `${preset}t`}
+                  Tick Count
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => onChangeAnalysisMode('duration')}
+                  className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                    settings.analysisMode === 'duration'
+                      ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                  }`}
+                >
+                  Duration
+                </button>
+              </div>
             </div>
+
+            {settings.analysisMode === 'ticks' ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Analysis Sample (Ticks)
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800">
+                    {([25, 50, 100, 200, 500, 'custom'] as WindowPreset[]).map((preset) => (
+                      <button
+                        key={String(preset)}
+                        type="button"
+                        onClick={() => onChangeWindowPreset(preset)}
+                        className={`px-2 py-1 text-xs font-mono rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          settings.analysisWindowPreset === preset
+                            ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {preset === 'custom' ? `${settings.customWindowSize}t` : `${preset}t`}
+                      </button>
+                    ))}
+                  </div>
+                  {settings.analysisWindowPreset === 'custom' && (
+                    <label className="inline-flex items-center gap-1 text-xs font-mono">
+                      <input
+                        type="number"
+                        min={10}
+                        max={2000}
+                        step={5}
+                        value={settings.customWindowSize}
+                        aria-label="Custom number of ticks for analysis"
+                        onChange={(e) =>
+                          onChangeCustomWindowSize(Number(e.target.value) || 100)
+                        }
+                        className="w-16 rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                      />
+                      <span className="text-[11px] text-slate-500">ticks</span>
+                    </label>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                  Duration Window ({stats.windowSize} ticks captured)
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800">
+                    {[
+                      { label: '30s', sec: 30 },
+                      { label: '1m', sec: 60 },
+                      { label: '2m', sec: 120 },
+                      { label: '5m', sec: 300 },
+                      { label: '10m', sec: 600 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.sec}
+                        type="button"
+                        onClick={() => onChangeDurationSeconds(opt.sec)}
+                        className={`px-2 py-1 text-xs font-mono rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                          settings.analysisDurationSeconds === opt.sec
+                            ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="inline-flex items-center gap-1 text-xs font-mono">
+                    <input
+                      type="number"
+                      min={10}
+                      max={3600}
+                      step={10}
+                      value={settings.analysisDurationSeconds}
+                      aria-label="Custom analysis duration in seconds"
+                      onChange={(e) =>
+                        onChangeDurationSeconds(Number(e.target.value) || 60)
+                      }
+                      className="w-16 rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-700 px-2 py-1 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                    />
+                    <span className="text-[11px] text-slate-500">sec</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -391,6 +499,9 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
             </h2>
             <span className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
               · {stats.windowSize} ticks
+              {settings.analysisMode === 'duration'
+                ? ` (${settings.analysisDurationSeconds}s)`
+                : ''}
             </span>
             {isCustomOrder && (
               <button
@@ -405,6 +516,33 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0E1522] px-2.5 py-1 text-xs text-slate-600 dark:text-slate-300 whitespace-nowrap shrink-0">
+              <Clock className="h-3.5 w-3.5 text-slate-400" />
+              <span>Signal Duration</span>
+              <select
+                aria-label="Signal validity duration"
+                value={settings.signalRefreshIntervalSeconds}
+                onChange={(e) => onChangeSignalDuration(Number(e.target.value))}
+                className="bg-transparent font-mono font-semibold text-slate-900 dark:text-slate-100 focus:outline-none cursor-pointer"
+              >
+                {[5, 10, 12, 15, 20, 30, 45, 60, 120].map((sec) => (
+                  <option key={sec} value={sec} className="bg-white dark:bg-[#0E1522]">
+                    {sec}s
+                  </option>
+                ))}
+                {![5, 10, 12, 15, 20, 30, 45, 60, 120].includes(
+                  settings.signalRefreshIntervalSeconds
+                ) && (
+                  <option
+                    value={settings.signalRefreshIntervalSeconds}
+                    className="bg-white dark:bg-[#0E1522]"
+                  >
+                    {settings.signalRefreshIntervalSeconds}s
+                  </option>
+                )}
+              </select>
+            </label>
+
             <button
               type="button"
               onClick={onToggleAutoGenerateSignals}
