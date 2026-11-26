@@ -1,0 +1,6 @@
+{
+  "name": "Deriv Quant AI",
+  "description": "Live digit analysis, statistical modeling, and signal intelligence terminal for Deriv synthetic indices.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
