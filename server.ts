@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import express, { type Request, type Response } from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -65,7 +65,11 @@ async function startServer(): Promise<void> {
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req: Request, res: Response) => {
-    res.json({ ok: true, timestamp: Date.now() });
+    res.json({
+      ok: true,
+      geminiConfigured: Boolean(getGeminiClient()),
+      timestamp: Date.now(),
+    });
   });
 
   app.post('/api/ai/digit-prediction', async (req: Request, res: Response) => {
@@ -119,83 +123,133 @@ async function startServer(): Promise<void> {
       signalConfidenceScores: body.signalConfidences || {},
     };
 
+    const extractGeminiErrorMessage = (err: unknown): { status: number; message: string; retryable: boolean } => {
+      const raw = err instanceof Error ? err.message : 'Failed to generate AI digit prediction.';
+      try {
+        const outer = JSON.parse(raw) as { error?: { code?: number; message?: string; status?: string } };
+        if (outer?.error?.message) {
+          const code = Number(outer.error.code) || 502;
+          const retryable = code === 503 || code === 429 || outer.error.status === 'UNAVAILABLE';
+          return { status: code === 400 || code === 403 || code === 429 ? code : 502, message: outer.error.message, retryable };
+        }
+      } catch {
+        // Not a JSON-wrapped SDK error message
+      }
+      const retryable = raw.includes('503') || raw.includes('UNAVAILABLE') || raw.includes('429');
+      return { status: 502, message: raw, retryable };
+    };
+
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Analyze this live synthetic index digit distribution snapshot and produce a calibrated statistical digit prediction and confidence assessment:\n${JSON.stringify(promptContext)}`,
-        config: {
-          systemInstruction:
-            'You are a quantitative statistical analyst specializing in synthetic index digit distributions. Analyze empirical frequencies, z-scores, Markov conditional transitions, Shannon entropy, chi-square significance, and tick return volatility. Never promise guaranteed outcomes or financial profits; frame all outputs strictly as probabilistic statistical estimates for research. Keep rationale concise (2-3 sentences).',
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              predictedDigit: {
-                type: Type.INTEGER,
-                description: 'Primary statistical focus digit from 0 to 9.',
-              },
-              runnerUpDigit: {
-                type: Type.INTEGER,
-                description: 'Secondary statistical digit from 0 to 9.',
-              },
-              differsAvoidDigit: {
-                type: Type.INTEGER,
-                description: 'Lowest-momentum or suppressed digit from 0 to 9 for Differs research.',
-              },
-              recommendedCategory: {
-                type: Type.STRING,
-                description: 'One of MATCHES, DIFFERS, EVEN, or ODD.',
-              },
-              parityBias: {
-                type: Type.STRING,
-                description: 'One of EVEN, ODD, or NEUTRAL.',
-              },
-              aiConfidenceScore: {
-                type: Type.INTEGER,
-                description: 'Calibrated statistical confidence score from 0 to 100.',
-              },
-              confidenceTier: {
-                type: Type.STRING,
-                description: 'One of Very High, High, Moderate, Low, or Very Low.',
-              },
-              volatilityRegime: {
-                type: Type.STRING,
-                description: 'One of Low, Moderate, Elevated, or Extreme.',
-              },
-              rationale: {
-                type: Type.STRING,
-                description: 'Concise 2-3 sentence quantitative explanation referencing z-scores, Markov transitions, and volatility.',
-              },
-              riskFactors: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: '2-3 brief statistical caveats (sample size, p-value, volatility).',
+      let responseText = '';
+      let lastErr: unknown = null;
+      const maxAttempts = 2;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const response = await ai.models.generateContent({
+            model: 'gemini-4-hydrogen',
+            contents: `Analyze this live synthetic index digit distribution snapshot and produce a calibrated statistical digit prediction and confidence assessment:\n${JSON.stringify(promptContext)}`,
+            config: {
+              abortSignal: AbortSignal.timeout(12000),
+              systemInstruction:
+                'You are a quantitative statistical analyst specializing in synthetic index digit distributions. Analyze empirical frequencies, z-scores, Markov conditional transitions, Shannon entropy, chi-square significance, and tick return volatility. Never promise guaranteed outcomes or financial profits; frame all outputs strictly as probabilistic statistical estimates for research. Keep rationale concise (2-3 sentences).',
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  predictedDigit: {
+                    type: Type.INTEGER,
+                    description: 'Primary statistical focus digit from 0 to 9.',
+                  },
+                  runnerUpDigit: {
+                    type: Type.INTEGER,
+                    description: 'Secondary statistical digit from 0 to 9.',
+                  },
+                  differsAvoidDigit: {
+                    type: Type.INTEGER,
+                    description: 'Lowest-momentum or suppressed digit from 0 to 9 for Differs research.',
+                  },
+                  recommendedCategory: {
+                    type: Type.STRING,
+                    description: 'One of MATCHES, DIFFERS, EVEN, or ODD.',
+                  },
+                  parityBias: {
+                    type: Type.STRING,
+                    description: 'One of EVEN, ODD, or NEUTRAL.',
+                  },
+                  aiConfidenceScore: {
+                    type: Type.INTEGER,
+                    description: 'Calibrated statistical confidence score from 0 to 100.',
+                  },
+                  confidenceTier: {
+                    type: Type.STRING,
+                    description: 'One of Very High, High, Moderate, Low, or Very Low.',
+                  },
+                  volatilityRegime: {
+                    type: Type.STRING,
+                    description: 'One of Low, Moderate, Elevated, or Extreme.',
+                  },
+                  rationale: {
+                    type: Type.STRING,
+                    description: 'Concise 2-3 sentence quantitative explanation referencing z-scores, Markov transitions, and volatility.',
+                  },
+                  riskFactors: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: '2-3 brief statistical caveats (sample size, p-value, volatility).',
+                  },
+                },
+                required: [
+                  'predictedDigit',
+                  'runnerUpDigit',
+                  'differsAvoidDigit',
+                  'recommendedCategory',
+                  'parityBias',
+                  'aiConfidenceScore',
+                  'confidenceTier',
+                  'volatilityRegime',
+                  'rationale',
+                  'riskFactors',
+                ],
               },
             },
-            required: [
-              'predictedDigit',
-              'runnerUpDigit',
-              'differsAvoidDigit',
-              'recommendedCategory',
-              'parityBias',
-              'aiConfidenceScore',
-              'confidenceTier',
-              'volatilityRegime',
-              'rationale',
-              'riskFactors',
-            ],
-          },
-        },
-      });
+          });
 
-      const rawText = (response.text ?? '').trim();
+          responseText = (response.text ?? '').trim();
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const info = extractGeminiErrorMessage(err);
+          if (!info.retryable || attempt === maxAttempts) {
+            throw err;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 600));
+        }
+      }
+
+      if (lastErr) {
+        throw lastErr;
+      }
+
+      const rawText = responseText;
       if (!rawText) {
-        res.status(502).json({ error: 'Gemini returned an empty analysis response.' });
+        res.status(502).json({ error: 'AI model returned an empty analysis response.' });
         return;
       }
 
-      const parsed = JSON.parse(rawText) as Record<string, unknown>;
+      const cleanedText = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(cleanedText) as Record<string, unknown>;
+      } catch {
+        res.status(502).json({ error: 'AI model returned a non-JSON prediction payload.' });
+        return;
+      }
       const clampDigit = (val: unknown, fallback: number) => {
         const n = Number(val);
         return Number.isInteger(n) && n >= 0 && n <= 9 ? n : fallback;
@@ -237,10 +291,22 @@ async function startServer(): Promise<void> {
           : [],
       });
     } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to generate AI digit prediction.';
-      res.status(502).json({ error: message });
+      const info = extractGeminiErrorMessage(err);
+      res.status(info.status).json({ error: info.message });
     }
+  });
+
+  app.use('/api', (_req: Request, res: Response) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      const msg = err instanceof Error ? err.message : 'Internal server error';
+      res.status(500).json({ error: msg });
+      return;
+    }
+    next(err);
   });
 
   if (!IS_PROD) {

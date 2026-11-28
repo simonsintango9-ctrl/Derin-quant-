@@ -622,12 +622,25 @@ export default function App() {
         }),
       });
 
-      const payload = (await response.json()) as AIDigitPrediction & { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error || `AI prediction request failed (${response.status})`);
+      const rawText = await response.text();
+      let payload: (Partial<AIDigitPrediction> & { error?: string }) | null = null;
+      try {
+        payload = rawText ? (JSON.parse(rawText) as Partial<AIDigitPrediction> & { error?: string }) : null;
+      } catch {
+        const trimmed = rawText.trim().toLowerCase();
+        if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<')) {
+          throw new Error(
+            `AI prediction service returned an HTML page (HTTP ${response.status}). Please reload the app or try again in a moment.`
+          );
+        }
+        throw new Error(`AI prediction endpoint returned invalid JSON (HTTP ${response.status}).`);
       }
 
-      setAiPrediction(payload);
+      if (!response.ok || !payload) {
+        throw new Error(payload?.error || `AI prediction request failed (${response.status})`);
+      }
+
+      setAiPrediction(payload as AIDigitPrediction);
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : 'Unable to complete AI digit prediction.';
