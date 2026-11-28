@@ -1,12 +1,30 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Download, Play, RotateCcw, Trash2, XCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  Download,
+  Eye,
+  EyeOff,
+  Play,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+  XCircle,
+} from 'lucide-react';
 import { DEFAULT_USER_SETTINGS } from '../constants/markets';
 import { runEngineDiagnostics } from '../engines/diagnosticTests';
-import { EngineDiagnosticResult, UserSettings } from '../types/deriv';
+import {
+  AccountMode,
+  AccountSessionInfo,
+  EngineDiagnosticResult,
+  UserSettings,
+} from '../types/deriv';
 
 interface SettingsViewProps {
   settings: UserSettings;
+  accountSession: AccountSessionInfo;
   onUpdateSettings: (next: UserSettings) => void;
+  onAuthorizeAccount: (mode: AccountMode, token: string) => Promise<void>;
+  onDisconnectAccount: () => void;
   onExportTicksJson: () => void;
   onExportSignalsCsv: () => void;
   onClearStoredData: () => void;
@@ -14,7 +32,10 @@ interface SettingsViewProps {
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
+  accountSession,
   onUpdateSettings,
+  onAuthorizeAccount,
+  onDisconnectAccount,
   onExportTicksJson,
   onExportSignalsCsv,
   onClearStoredData,
@@ -22,6 +43,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [diagnostics, setDiagnostics] = useState<EngineDiagnosticResult[] | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
   const [appIdDraft, setAppIdDraft] = useState(settings.appId);
+  const [accountModeDraft, setAccountModeDraft] = useState<AccountMode>(
+    accountSession.mode === 'public' ? 'demo' : accountSession.mode
+  );
+  const [tokenDraft, setTokenDraft] = useState('');
+  const [showToken, setShowToken] = useState(false);
 
   const handleApplyAppId = () => {
     const clean = appIdDraft.trim() || '1089';
@@ -49,17 +75,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] p-5 space-y-4">
           <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-              Deriv API &amp; Stream Parameters
+              Public Deriv WebSocket &amp; Stream Parameters
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Public WebSocket configuration (no trading API token required)
+              Streams live market ticks from Deriv&apos;s public options feed with zero API token or App ID required
             </p>
           </div>
 
           <div className="space-y-4 text-xs">
             <div className="space-y-1.5">
               <label htmlFor="deriv-app-id" className="block text-slate-700 dark:text-slate-300 font-medium">
-                Deriv App ID
+                Deriv App ID (Fallback &amp; Account Socket)
               </label>
               <div className="flex gap-2">
                 <input
@@ -83,8 +109,105 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
               </div>
               <span className="block text-[11px] text-slate-500">
-                Default public Deriv App ID is 1089. Stored locally only.
+                Used only for optional Demo/Real account sockets or v3 fallback (default public App ID: 1089).
               </span>
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-slate-700 dark:text-slate-300 font-medium">
+                  Deriv Account Connection (Optional)
+                </span>
+                <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                  {accountSession.isAuthorized
+                    ? `${(accountSession.actualAccountType || accountSession.mode).toUpperCase()} · ${accountSession.loginid}`
+                    : 'Public WS Only'}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800 w-fit">
+                {(['public', 'demo', 'real'] as AccountMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setAccountModeDraft(mode);
+                      if (mode === 'public' && accountSession.isAuthorized) {
+                        onDisconnectAccount();
+                        setTokenDraft('');
+                      }
+                    }}
+                    className={`px-3 py-1 text-xs font-medium rounded-md capitalize transition-colors cursor-pointer ${
+                      accountModeDraft === mode
+                        ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {mode === 'public' ? 'Public Only' : mode}
+                  </button>
+                ))}
+              </div>
+
+              {accountModeDraft !== 'public' && (
+                <div className="flex flex-wrap gap-2">
+                  <div className="relative flex-1 min-w-[200px]">
+                    <input
+                      type={showToken ? 'text' : 'password'}
+                      value={tokenDraft}
+                      onChange={(e) => setTokenDraft(e.target.value)}
+                      placeholder={`Optional: Deriv ${accountModeDraft.toUpperCase()} API token`}
+                      autoComplete="off"
+                      className="w-full rounded-lg bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-800 pl-3 pr-9 py-2 font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowToken((prev) => !prev)}
+                      aria-label={showToken ? 'Hide token' : 'Show token'}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    >
+                      {showToken ? (
+                        <EyeOff className="h-3.5 w-3.5" />
+                      ) : (
+                        <Eye className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!tokenDraft.trim() || accountSession.isAuthorizing}
+                    onClick={() => void onAuthorizeAccount(accountModeDraft, tokenDraft.trim())}
+                    className="px-3.5 py-2 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    {accountSession.isAuthorizing ? 'Authorizing...' : 'Connect'}
+                  </button>
+
+                  {accountSession.isAuthorized && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDisconnectAccount();
+                        setTokenDraft('');
+                      }}
+                      className="px-3 py-2 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 transition-colors cursor-pointer"
+                    >
+                      Unlink
+                    </button>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>
+                  Live market ticks stream via Public WS without any token. Optional tokens remain in memory only for read-only account status &amp; balance.
+                </span>
+              </div>
+              {accountSession.authError && (
+                <div className="text-[11px] text-amber-700 dark:text-amber-300 font-medium">
+                  {accountSession.authError}
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4">

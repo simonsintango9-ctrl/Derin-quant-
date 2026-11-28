@@ -35,6 +35,57 @@ function classifySignalQuality(
   return 'Very Low Confidence';
 }
 
+/**
+ * Computes a 0-100% Confidence Score grounded in:
+ * - Standard deviation metrics (target z-score & digit distribution std dev)
+ * - Market price volatility stability (tick-to-tick return volatility & quote dispersion)
+ * - Sample adequacy & multi-model agreement
+ */
+function computeConfidenceScore(params: {
+  sampleSize: number;
+  minSampleSize: number;
+  targetZScore: number;
+  frequencyStdDev: number;
+  tickVolatility: number;
+  quoteStdDev: number;
+  agreement: number;
+  evidenceScore: number;
+}): number {
+  const {
+    sampleSize,
+    minSampleSize,
+    targetZScore,
+    frequencyStdDev,
+    tickVolatility,
+    quoteStdDev,
+    agreement,
+    evidenceScore,
+  } = params;
+
+  if (sampleSize <= 0) return 0;
+
+  const sampleFactor = Math.min(1, sampleSize / Math.max(25, minSampleSize));
+  const zStrength = Math.min(1, Math.max(0, targetZScore) / 2.8);
+  const stdDevStrength = Math.min(1, Math.max(0, frequencyStdDev) / 6.0);
+  const stdDevComposite = 0.65 * zStrength + 0.35 * stdDevStrength;
+
+  // Volatility stability: moderate price volatility without extreme whipsaw spikes boosts confidence
+  const quoteDispersionPenalty = quoteStdDev > 0 ? Math.min(0.15, tickVolatility * 0.5) : 0;
+  const volatilityStability = Math.max(
+    0.25,
+    1 - Math.min(0.65, tickVolatility * 2.4) - quoteDispersionPenalty
+  );
+
+  const rawScore =
+    sampleFactor *
+    (42 * stdDevComposite +
+      24 * volatilityStability +
+      19 * Math.max(0, Math.min(1, agreement)) +
+      15 * Math.max(0, Math.min(1, evidenceScore)));
+
+  return Math.max(0, Math.min(100, Math.round(rawScore)));
+}
+
 export interface SignalGenerationInput {
   symbol: MarketSymbol;
   allTicks: TickRecord[];
@@ -264,6 +315,50 @@ export function generateSignals(input: SignalGenerationInput): {
       .filter((d) => d.digit % 2 === 1)
       .sort((a, b) => b.percentage - a.percentage)[0]?.digit ?? 1;
 
+  const matchesConfidence = computeConfidenceScore({
+    sampleSize: stats.windowSize,
+    minSampleSize: thresholds.minSampleSize,
+    targetZScore: Math.max(0, bestMatch.metric.zScore),
+    frequencyStdDev: stats.frequencyStdDev,
+    tickVolatility: stats.tickVolatility,
+    quoteStdDev: stats.quoteStdDev,
+    agreement: bestMatch.agreement,
+    evidenceScore: bestMatch.evidenceScore,
+  });
+
+  const differsConfidence = computeConfidenceScore({
+    sampleSize: stats.windowSize,
+    minSampleSize: thresholds.minSampleSize,
+    targetZScore: Math.max(0, -bestDiffers.metric.zScore),
+    frequencyStdDev: stats.frequencyStdDev,
+    tickVolatility: stats.tickVolatility,
+    quoteStdDev: stats.quoteStdDev,
+    agreement: bestDiffers.agreement,
+    evidenceScore: bestDiffers.evidenceScore,
+  });
+
+  const evenConfidence = computeConfidenceScore({
+    sampleSize: stats.windowSize,
+    minSampleSize: thresholds.minSampleSize,
+    targetZScore: Math.max(0, evenZ),
+    frequencyStdDev: stats.frequencyStdDev,
+    tickVolatility: stats.tickVolatility,
+    quoteStdDev: stats.quoteStdDev,
+    agreement: evenAgree,
+    evidenceScore: evenEvidence,
+  });
+
+  const oddConfidence = computeConfidenceScore({
+    sampleSize: stats.windowSize,
+    minSampleSize: thresholds.minSampleSize,
+    targetZScore: Math.max(0, oddZ),
+    frequencyStdDev: stats.frequencyStdDev,
+    tickVolatility: stats.tickVolatility,
+    quoteStdDev: stats.quoteStdDev,
+    agreement: oddAgree,
+    evidenceScore: oddEvidence,
+  });
+
   const matchesSignal: QuantSignal = {
     id: `SIG-M-${symbol}-${latestTick.epoch}-${bestMatch.digit}`,
     symbol,
@@ -283,6 +378,7 @@ export function generateSignals(input: SignalGenerationInput): {
       bestMatch.evidenceScore,
       thresholds
     ),
+    confidenceScore: matchesConfidence,
     evidenceSummary: buildEvidenceNote(
       'MATCHES',
       bestMatch.digit,
@@ -316,6 +412,7 @@ export function generateSignals(input: SignalGenerationInput): {
       bestDiffers.evidenceScore,
       thresholds
     ),
+    confidenceScore: differsConfidence,
     evidenceSummary: buildEvidenceNote(
       'DIFFERS',
       bestDiffers.digit,
@@ -345,6 +442,7 @@ export function generateSignals(input: SignalGenerationInput): {
     modelAgreementScore: evenAgree,
     modelsSupporting: evenModels,
     statisticalReliability: classifySignalQuality(stats.windowSize, evenEvidence, thresholds),
+    confidenceScore: evenConfidence,
     evidenceSummary: buildEvidenceNote('EVEN', bestEvenDigit, evenZ, evenAgree, stats.windowSize),
     generatedAt: now,
     anchorTickEpoch: latestTick.epoch,
@@ -368,6 +466,7 @@ export function generateSignals(input: SignalGenerationInput): {
     modelAgreementScore: oddAgree,
     modelsSupporting: oddModels,
     statisticalReliability: classifySignalQuality(stats.windowSize, oddEvidence, thresholds),
+    confidenceScore: oddConfidence,
     evidenceSummary: buildEvidenceNote('ODD', bestOddDigit, oddZ, oddAgree, stats.windowSize),
     generatedAt: now,
     anchorTickEpoch: latestTick.epoch,

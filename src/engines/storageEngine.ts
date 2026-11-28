@@ -1,4 +1,4 @@
-import { DEFAULT_USER_SETTINGS } from '../constants/markets';
+import { DEFAULT_USER_SETTINGS, MARKET_MAP } from '../constants/markets';
 import { MarketSymbol, SignalRecord, TickRecord, UserSettings } from '../types/deriv';
 
 const SETTINGS_STORAGE_KEY = 'deriv_quant_ai_settings_v1';
@@ -20,9 +20,20 @@ export function loadUserSettings(): UserSettings {
         ? rawOrder
         : validOrder;
 
+    const selectedMarket =
+      parsed.selectedMarket && parsed.selectedMarket in MARKET_MAP
+        ? parsed.selectedMarket
+        : DEFAULT_USER_SETTINGS.selectedMarket;
+
     return {
       ...DEFAULT_USER_SETTINGS,
       ...parsed,
+      selectedMarket,
+      appId:
+        typeof parsed.appId === 'string' && parsed.appId.trim()
+          ? parsed.appId.trim()
+          : DEFAULT_USER_SETTINGS.appId,
+      accountMode: 'public',
       analysisMode:
         parsed.analysisMode === 'duration' || parsed.analysisMode === 'ticks'
           ? parsed.analysisMode

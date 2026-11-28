@@ -204,14 +204,21 @@ export function runEngineDiagnostics(): EngineDiagnosticResult[] {
     const ok =
       matchesSignal !== null &&
       differsSignal !== null &&
+      Number.isFinite(stats.frequencyStdDev) &&
+      Number.isFinite(stats.tickVolatility) &&
+      matchesSignal.confidenceScore >= 0 &&
+      matchesSignal.confidenceScore <= 100 &&
+      differsSignal.confidenceScore >= 0 &&
+      differsSignal.confidenceScore <= 100 &&
       evalRes.newlyEvaluated.length === 1 &&
+      evalRes.newlyEvaluated[0].confidenceScore === matchesSignal.confidenceScore &&
       evalRes.newlyEvaluated[0].outcome === 'CORRECT';
 
     results.push({
       name: 'Matches/Differs Signal Engine & Out-of-Sample Outcome Recording',
       passed: ok,
       details: ok
-        ? `Generated Matches(${matchesSignal?.targetDigit}) & Differs(${differsSignal?.targetDigit}); verified next-tick out-of-sample grading.`
+        ? `Generated Matches(${matchesSignal?.targetDigit}, ${matchesSignal?.confidenceScore}% conf) & Differs(${differsSignal?.targetDigit}, ${differsSignal?.confidenceScore}% conf); verified next-tick grading.`
         : 'Signal generation or evaluation test failed.',
     });
   } catch (e) {

@@ -1,7 +1,12 @@
 import { MarketDefinition, MarketSymbol, UserSettings } from '../types/deriv';
 
-export const DERIV_WS_ENDPOINT = 'wss://ws.derivws.com/websockets/v3';
+export const DERIV_WS_ENDPOINT = 'wss://api.derivws.com/trading/v1/options/ws/public';
 export const DERIV_WS_ENDPOINTS = [
+  'wss://api.derivws.com/trading/v1/options/ws/public',
+  'wss://ws.derivws.com/websockets/v3',
+  'wss://ws.binaryws.com/websockets/v3',
+] as const;
+export const DERIV_AUTH_WS_ENDPOINTS = [
   'wss://ws.derivws.com/websockets/v3',
   'wss://ws.binaryws.com/websockets/v3',
 ] as const;
@@ -90,6 +95,7 @@ export const MARKET_MAP: Record<MarketSymbol, MarketDefinition> = SUPPORTED_MARK
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   appId: DEFAULT_DERIV_APP_ID,
+  accountMode: 'public',
   selectedMarket: '1HZ100V',
   theme: 'light',
   tickHistorySize: 1000,

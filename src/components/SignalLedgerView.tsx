@@ -80,7 +80,11 @@ export const SignalLedgerView: React.FC<SignalLedgerViewProps> = ({
           <div className="mt-1.5 font-mono text-2xl font-bold text-emerald-700 dark:text-emerald-300 tabular-nums">
             {summary.evaluatedCount > 0 ? `${summary.accuracyPct.toFixed(1)}%` : '—'}
           </div>
-          <div className="mt-1 text-xs text-slate-500">Across all graded signals</div>
+          <div className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
+            {summary.avgConfidenceScore !== null
+              ? `Avg Confidence: ${summary.avgConfidenceScore}%`
+              : 'Across all graded signals'}
+          </div>
         </div>
       </section>
 
@@ -261,48 +265,86 @@ export const SignalLedgerView: React.FC<SignalLedgerViewProps> = ({
                   <th className="py-2 text-left font-medium">Category</th>
                   <th className="py-2 text-right font-medium">Target</th>
                   <th className="py-2 text-right font-medium">Est. Prob</th>
+                  <th className="py-2 text-right font-medium">Confidence Score</th>
                   <th className="py-2 text-right font-medium">Next Digit</th>
                   <th className="py-2 text-right font-medium">Outcome</th>
                   <th className="py-2 text-left font-medium pl-4">Reliability · Window</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {filtered.slice(0, 150).map((rec) => (
-                  <tr key={rec.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
-                    <td className="py-2 text-left text-slate-500 dark:text-slate-400">
-                      {new Date(rec.generatedAt).toLocaleTimeString()}
-                    </td>
-                    <td className="py-2 text-left text-slate-800 dark:text-slate-200">
-                      {rec.symbol}
-                    </td>
-                    <td className="py-2 text-left font-semibold text-emerald-700 dark:text-emerald-300">
-                      {rec.category}
-                    </td>
-                    <td className="py-2 text-right font-bold text-slate-900 dark:text-slate-100">
-                      {rec.category === 'EVEN' || rec.category === 'ODD'
-                        ? rec.category
-                        : rec.targetDigit}
-                    </td>
-                    <td className="py-2 text-right text-slate-700 dark:text-slate-300">
-                      {(rec.estimatedProbability * 100).toFixed(1)}%
-                    </td>
-                    <td className="py-2 text-right font-bold text-slate-900 dark:text-slate-100">
-                      {rec.actualNextDigit !== null ? rec.actualNextDigit : '—'}
-                    </td>
-                    <td className="py-2 text-right font-sans font-medium">
-                      {rec.outcome === 'CORRECT' ? (
-                        <span className="text-emerald-600 dark:text-emerald-400">Correct</span>
-                      ) : rec.outcome === 'INCORRECT' ? (
-                        <span className="text-rose-600 dark:text-rose-400">Incorrect</span>
-                      ) : (
-                        <span className="text-amber-600 dark:text-amber-400">Pending</span>
-                      )}
-                    </td>
-                    <td className="py-2 text-left font-sans text-slate-500 dark:text-slate-400 pl-4">
-                      {rec.reliabilityTier} · {rec.windowUsed}t
-                    </td>
-                  </tr>
-                ))}
+                {filtered.slice(0, 150).map((rec) => {
+                  const hasScore =
+                    typeof rec.confidenceScore === 'number' && Number.isFinite(rec.confidenceScore);
+                  const score = hasScore ? Math.max(0, Math.min(100, Math.round(rec.confidenceScore!))) : null;
+                  const scoreColorClass =
+                    score === null
+                      ? 'text-slate-400'
+                      : score >= 70
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : score >= 45
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-rose-600 dark:text-rose-400';
+                  const barColorClass =
+                    score === null
+                      ? 'bg-slate-300 dark:bg-slate-700'
+                      : score >= 70
+                        ? 'bg-emerald-500'
+                        : score >= 45
+                          ? 'bg-amber-500'
+                          : 'bg-rose-500';
+
+                  return (
+                    <tr key={rec.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/30">
+                      <td className="py-2 text-left text-slate-500 dark:text-slate-400">
+                        {new Date(rec.generatedAt).toLocaleTimeString()}
+                      </td>
+                      <td className="py-2 text-left text-slate-800 dark:text-slate-200">
+                        {rec.symbol}
+                      </td>
+                      <td className="py-2 text-left font-semibold text-emerald-700 dark:text-emerald-300">
+                        {rec.category}
+                      </td>
+                      <td className="py-2 text-right font-bold text-slate-900 dark:text-slate-100">
+                        {rec.category === 'EVEN' || rec.category === 'ODD'
+                          ? rec.category
+                          : rec.targetDigit}
+                      </td>
+                      <td className="py-2 text-right text-slate-700 dark:text-slate-300">
+                        {(rec.estimatedProbability * 100).toFixed(1)}%
+                      </td>
+                      <td className="py-2 text-right">
+                        {score !== null ? (
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <div className="hidden sm:block w-14 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full ${barColorClass}`}
+                                style={{ width: `${score}%` }}
+                              />
+                            </div>
+                            <span className={`font-semibold ${scoreColorClass}`}>{score}%</span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-right font-bold text-slate-900 dark:text-slate-100">
+                        {rec.actualNextDigit !== null ? rec.actualNextDigit : '—'}
+                      </td>
+                      <td className="py-2 text-right font-sans font-medium">
+                        {rec.outcome === 'CORRECT' ? (
+                          <span className="text-emerald-600 dark:text-emerald-400">Correct</span>
+                        ) : rec.outcome === 'INCORRECT' ? (
+                          <span className="text-rose-600 dark:text-rose-400">Incorrect</span>
+                        ) : (
+                          <span className="text-amber-600 dark:text-amber-400">Pending</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-left font-sans text-slate-500 dark:text-slate-400 pl-4">
+                        {rec.reliabilityTier} · {rec.windowUsed}t
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

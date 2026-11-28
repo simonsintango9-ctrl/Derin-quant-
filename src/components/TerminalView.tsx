@@ -6,19 +6,27 @@ import {
   ArrowUpRight,
   ChevronDown,
   Clock,
+  Eye,
+  EyeOff,
+  KeyRound,
   Pause,
   Play,
   RefreshCw,
   RotateCcw,
+  ShieldCheck,
   Wifi,
   WifiOff,
   Zap,
 } from 'lucide-react';
 import { MARKET_MAP, SUPPORTED_MARKETS } from '../constants/markets';
 import {
+  AccountMode,
+  AccountSessionInfo,
+  AIDigitPrediction,
   AnalysisMode,
   ConnectionStatusInfo,
   MarketSymbol,
+  MarkovAnalysisResult,
   ProbabilityReport,
   QuantSignal,
   SignalCategory,
@@ -27,6 +35,7 @@ import {
   UserSettings,
   WindowPreset,
 } from '../types/deriv';
+import { AIConfidencePanel } from './AIConfidencePanel';
 import { DigitFrequencyChart, MultiWindowComparisonChart } from './charts/QuantCharts';
 import { DigitScanCard } from './DigitScanCard';
 
@@ -38,8 +47,10 @@ export interface ScannedCardState {
 interface TerminalViewProps {
   market: MarketSymbol;
   connection: ConnectionStatusInfo;
+  accountSession: AccountSessionInfo;
   ticks: TickRecord[];
   stats: StatisticalAnalysisResult;
+  markov: MarkovAnalysisResult;
   probability: ProbabilityReport;
   liveSignals: {
     MATCHES: QuantSignal | null;
@@ -49,6 +60,9 @@ interface TerminalViewProps {
   };
   scannedCards: Partial<Record<SignalCategory, ScannedCardState>>;
   settings: UserSettings;
+  aiPrediction: AIDigitPrediction | null;
+  isPredicting: boolean;
+  aiError: string | null;
   onSelectMarket: (symbol: MarketSymbol) => void;
   onChangeAnalysisMode: (mode: AnalysisMode) => void;
   onChangeWindowPreset: (preset: WindowPreset) => void;
@@ -61,6 +75,10 @@ interface TerminalViewProps {
   onReorderSignalCards: (nextOrder: SignalCategory[]) => void;
   onToggleConnection: () => void;
   onReconnectNow: () => void;
+  onRestartTickStream: () => void;
+  onAuthorizeAccount: (mode: AccountMode, token: string) => Promise<void>;
+  onDisconnectAccount: () => void;
+  onRunAIPrediction: () => void;
   onSwitchToLab: () => void;
 }
 
@@ -69,12 +87,17 @@ const DEFAULT_SIGNAL_CARD_ORDER: SignalCategory[] = ['MATCHES', 'DIFFERS', 'EVEN
 export const TerminalView: React.FC<TerminalViewProps> = ({
   market,
   connection,
+  accountSession,
   ticks,
   stats,
+  markov,
   probability,
   liveSignals,
   scannedCards,
   settings,
+  aiPrediction,
+  isPredicting,
+  aiError,
   onSelectMarket,
   onChangeAnalysisMode,
   onChangeWindowPreset,
@@ -87,10 +110,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   onReorderSignalCards,
   onToggleConnection,
   onReconnectNow,
+  onRestartTickStream,
+  onAuthorizeAccount,
+  onDisconnectAccount,
+  onRunAIPrediction,
   onSwitchToLab,
 }) => {
   const [draggedCategory, setDraggedCategory] = useState<SignalCategory | null>(null);
   const [dragOverCategory, setDragOverCategory] = useState<SignalCategory | null>(null);
+  const [showAccountPanel, setShowAccountPanel] = useState(false);
+  const [selectedAccountMode, setSelectedAccountMode] = useState<AccountMode>(
+    accountSession.mode === 'public' ? 'demo' : accountSession.mode
+  );
+  const [tokenInput, setTokenInput] = useState('');
+  const [showToken, setShowToken] = useState(false);
 
   const cardOrder =
     settings.signalCardOrder && settings.signalCardOrder.length === 4
@@ -158,7 +191,7 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
   const isConnected = connection.state === 'connected';
   const latestTick = ticks.length > 0 ? ticks[ticks.length - 1] : null;
   const previousTick = ticks.length > 1 ? ticks[ticks.length - 2] : null;
-  const marketMeta = MARKET_MAP[market];
+  const marketMeta = MARKET_MAP[market] ?? MARKET_MAP['1HZ100V'];
 
   const priceDelta =
     latestTick && previousTick ? latestTick.quote - previousTick.quote : 0;
@@ -183,76 +216,223 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
     connection.state === 'connecting' || connection.state === 'reconnecting';
   const feedStatusText =
     connection.state === 'connected'
-      ? 'Live Feed Connected'
+      ? 'Public Deriv Feed Connected'
       : connection.state === 'connecting'
-        ? 'Connecting to Deriv Feed...'
+        ? 'Connecting to Public Deriv WebSocket...'
         : connection.state === 'reconnecting'
-          ? `Reconnecting to Feed (Attempt #${connection.reconnectAttempt})...`
+          ? `Reconnecting to Public Feed (Attempt #${connection.reconnectAttempt})...`
           : connection.state === 'error'
-            ? 'Feed Connection Error'
-            : 'Feed Disconnected';
+            ? 'Public Feed Connection Error'
+            : 'Public Feed Disconnected';
+
+  const handleAccountSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (selectedAccountMode === 'public') {
+      onDisconnectAccount();
+      setTokenInput('');
+      return;
+    }
+    if (!tokenInput.trim()) return;
+    await onAuthorizeAccount(selectedAccountMode, tokenInput.trim());
+  };
+
+  const accountSummaryLabel = accountSession.isAuthorized
+    ? `${(accountSession.actualAccountType || accountSession.mode).toUpperCase()} · ${accountSession.loginid}${
+        accountSession.balance !== null
+          ? ` · ${accountSession.balance.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })} ${accountSession.currency || 'USD'}`
+          : ''
+      }`
+    : accountSession.isAuthorizing
+      ? 'Authorizing Account...'
+      : 'Public WS · Account Optional';
 
   return (
     <div className="space-y-6">
-      {/* Live Market Feed Connection Bar */}
-      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <span
-            className={`h-2.5 w-2.5 rounded-full shrink-0 ${
-              isConnected
-                ? 'bg-emerald-500 animate-pulse'
-                : isFeedTransitioning
-                  ? 'bg-amber-500 animate-pulse'
-                  : connection.state === 'error'
-                    ? 'bg-rose-500'
-                    : 'bg-slate-400'
-            }`}
-          />
-          <div className="min-w-0">
-            <div className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
-              {feedStatusText}
+      {/* Live Public Deriv WebSocket Feed + Optional Deriv Account Bar */}
+      <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0E1522] px-4 py-3 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <span
+              className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+                isConnected
+                  ? 'bg-emerald-500 animate-pulse'
+                  : isFeedTransitioning
+                    ? 'bg-amber-500 animate-pulse'
+                    : connection.state === 'error'
+                      ? 'bg-rose-500'
+                      : 'bg-slate-400'
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                  {feedStatusText}
+                </span>
+                <span
+                  className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-mono font-medium tabular-nums ${
+                    accountSession.isAuthorized
+                      ? accountSession.actualAccountType === 'real'
+                        ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-500/40 font-semibold'
+                        : 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/40 font-semibold'
+                      : 'bg-emerald-50 dark:bg-emerald-950/35 border border-emerald-200 dark:border-emerald-500/35 text-emerald-700 dark:text-emerald-300'
+                  }`}
+                >
+                  {accountSummaryLabel}
+                </span>
+              </div>
+              <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums truncate">
+                {endpointHost} ·{' '}
+                {connection.endpoint.includes('/options/ws/public')
+                  ? 'Public Options WS (No App ID Required)'
+                  : `Public App ID ${connection.appId}`}
+                {connection.latencyMs ? ` · ${connection.latencyMs}ms` : ''}
+                {isConnected
+                  ? connection.liveTickCount > 0 && connection.lastLiveTickAt
+                    ? ` · Streaming (${connection.liveTickCount} live · ${new Date(connection.lastLiveTickAt).toLocaleTimeString()})`
+                    : ' · Subscribing to live tick stream...'
+                  : ''}
+                {connection.errorMessage && !isConnected ? ` · ${connection.errorMessage}` : ''}
+              </div>
             </div>
-            <div className="text-[11px] font-mono text-slate-500 dark:text-slate-400 tabular-nums truncate">
-              {endpointHost} · App ID {connection.appId}
-              {connection.latencyMs ? ` · ${connection.latencyMs}ms` : ''}
-              {latestTick ? ` · Last tick ${new Date(latestTick.epoch * 1000).toLocaleTimeString()}` : ''}
-              {connection.errorMessage && !isConnected ? ` · ${connection.errorMessage}` : ''}
-            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowAccountPanel((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                showAccountPanel || accountSession.isAuthorized
+                  ? 'border-emerald-500/50 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300'
+                  : 'border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+              }`}
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+              <span>{accountSession.isAuthorized ? 'Deriv Account' : 'Link Account'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={isConnected ? onRestartTickStream : onReconnectNow}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isFeedTransitioning ? 'animate-spin' : ''}`} />
+              <span>{isConnected ? 'Resubscribe Ticks' : 'Reconnect'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleConnection}
+              className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                isConnected || isFeedTransitioning
+                  ? 'border border-slate-200 dark:border-slate-700 bg-white hover:bg-slate-100 dark:bg-[#090E17] dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+            >
+              {isConnected || isFeedTransitioning ? (
+                <>
+                  <WifiOff className="h-3.5 w-3.5" />
+                  <span>Disconnect</span>
+                </>
+              ) : (
+                <>
+                  <Wifi className="h-3.5 w-3.5" />
+                  <span>Connect Public Feed</span>
+                </>
+              )}
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onReconnectNow}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/80 dark:hover:bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        {/* Optional Deriv Account Authorization Panel (runs over Public Deriv WS) */}
+        {showAccountPanel && (
+          <form
+            onSubmit={(e) => void handleAccountSubmit(e)}
+            className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-3"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isFeedTransitioning ? 'animate-spin' : ''}`} />
-            <span>Reconnect</span>
-          </button>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-[#070B12] p-1 border border-slate-200 dark:border-slate-800">
+                {(['public', 'demo', 'real'] as AccountMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAccountMode(mode);
+                      if (mode === 'public' && accountSession.isAuthorized) {
+                        onDisconnectAccount();
+                        setTokenInput('');
+                      }
+                    }}
+                    className={`px-3 py-1 text-xs font-medium rounded-md capitalize transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      selectedAccountMode === mode
+                        ? 'bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 font-semibold shadow-xs'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {mode === 'public' ? 'Public Only' : `${mode} Account`}
+                  </button>
+                ))}
+              </div>
 
-          <button
-            type="button"
-            onClick={onToggleConnection}
-            className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-              isConnected || isFeedTransitioning
-                ? 'border border-slate-200 dark:border-slate-700 bg-white hover:bg-slate-100 dark:bg-[#090E17] dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
-                : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-            }`}
-          >
-            {isConnected || isFeedTransitioning ? (
-              <>
-                <WifiOff className="h-3.5 w-3.5" />
-                <span>Disconnect</span>
-              </>
-            ) : (
-              <>
-                <Wifi className="h-3.5 w-3.5" />
-                <span>Connect Feed</span>
-              </>
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                Live market ticks always stream via Public WS · linking your Demo/Real token is optional &amp; read-only
+              </span>
+            </div>
+
+            {selectedAccountMode !== 'public' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative flex-1 min-w-[220px]">
+                  <input
+                    type={showToken ? 'text' : 'password'}
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    placeholder={`Optional: Enter Deriv ${selectedAccountMode.toUpperCase()} API token`}
+                    autoComplete="off"
+                    className="w-full rounded-xl bg-slate-50 dark:bg-[#070B12] border border-slate-200 dark:border-slate-700 pl-3 pr-9 py-2 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-emerald-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken((prev) => !prev)}
+                    aria-label={showToken ? 'Hide token' : 'Show token'}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                  >
+                    {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!tokenInput.trim() || accountSession.isAuthorizing}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-45 disabled:cursor-not-allowed px-3.5 py-2 text-xs font-semibold text-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  {accountSession.isAuthorizing ? 'Authorizing...' : `Connect ${selectedAccountMode.toUpperCase()}`}
+                </button>
+
+                {accountSession.isAuthorized && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onDisconnectAccount();
+                      setTokenInput('');
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Unlink Account
+                  </button>
+                )}
+              </div>
             )}
-          </button>
-        </div>
+
+            {accountSession.authError && (
+              <div className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+                {accountSession.authError}
+              </div>
+            )}
+          </form>
+        )}
       </section>
 
       {/* Top Row: Select Market (Left) + Live Price & Window Controls (Right) */}
@@ -627,6 +807,20 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
         </section>
       )}
 
+      {/* AI Digit Prediction & 0-9 Digit Confidence Analyser */}
+      <AIConfidencePanel
+        marketName={marketMeta.name}
+        stats={stats}
+        markov={markov}
+        probability={probability}
+        minSampleSize={settings.thresholds.minSampleSize}
+        liveSignals={liveSignals}
+        aiPrediction={aiPrediction}
+        isPredicting={isPredicting}
+        aiError={aiError}
+        onRunAIPrediction={onRunAIPrediction}
+      />
+
       {/* CONTRACT ANALYSIS Section */}
       <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -752,16 +946,30 @@ export const TerminalView: React.FC<TerminalViewProps> = ({
                 </h3>
               </div>
               <span className="text-xs text-slate-500 font-mono tabular-nums">
-                {isConnected ? 'Live · ' : ''}
+                {isConnected
+                  ? connection.liveTickCount > 0
+                    ? `Live (${connection.liveTickCount}) · `
+                    : 'Subscribing · '
+                  : ''}
                 {ticks.length} ticks
               </span>
             </div>
 
             {recentTicksReversed.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center py-12 text-center text-xs text-slate-500">
-                {isConnected
-                  ? 'Waiting for incoming ticks from Deriv WebSocket...'
-                  : 'Disconnected. Tap Connect to stream live ticks.'}
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 py-12 text-center text-xs text-slate-500">
+                <span>
+                  {isConnected
+                    ? 'Waiting for incoming live ticks from Public Deriv WebSocket...'
+                    : 'Live feed disconnected. Connect to stream live ticks.'}
+                </span>
+                <button
+                  type="button"
+                  onClick={isConnected ? onRestartTickStream : onReconnectNow}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-3.5 py-2 text-xs font-semibold text-white transition-colors cursor-pointer"
+                >
+                  <Wifi className="h-3.5 w-3.5" />
+                  <span>{isConnected ? 'Resubscribe Ticks' : 'Stream Live Ticks'}</span>
+                </button>
               </div>
             ) : (
               <div className="mt-3 overflow-y-auto max-h-[340px] pr-1">

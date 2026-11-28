@@ -118,7 +118,7 @@ export const DigitScanCard: React.FC<DigitScanCardProps> = ({
   onDrop,
   onDragEnd,
 }) => {
-  const marketName = MARKET_MAP[market].name;
+  const marketName = (MARKET_MAP[market] ?? MARKET_MAP['1HZ100V']).name;
   const hasScanned = scannedSignal !== null;
   const isExpired = hasScanned && secondsRemaining <= 0;
   const isActive = hasScanned && secondsRemaining > 0;

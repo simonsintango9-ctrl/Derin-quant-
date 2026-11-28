@@ -262,6 +262,43 @@ export function runStatisticalAnalysis(
   }
   const maxEntropy = Math.log2(10); // ~3.321928 bits
 
+  // Digit frequency standard deviation around 10% uniform baseline (percentage points)
+  const frequencyStdDev =
+    n > 0
+      ? Math.sqrt(
+          metrics.reduce((sum, m) => sum + Math.pow(m.percentage - 10, 2), 0) / metrics.length
+        )
+      : 0;
+
+  // Price standard deviation & tick-to-tick return volatility across the active window
+  const windowQuotes = allTicks.slice(-effectiveWindow).map((t) => t.quote);
+  let quoteStdDev = 0;
+  let tickVolatility = 0;
+
+  if (windowQuotes.length > 1) {
+    const quoteMean = windowQuotes.reduce((s, q) => s + q, 0) / windowQuotes.length;
+    const quoteVariance =
+      windowQuotes.reduce((s, q) => s + Math.pow(q - quoteMean, 2), 0) /
+      (windowQuotes.length - 1);
+    quoteStdDev = Math.sqrt(Math.max(0, quoteVariance));
+
+    const pctReturns: number[] = [];
+    for (let i = 1; i < windowQuotes.length; i++) {
+      const prev = windowQuotes[i - 1];
+      if (prev > 0) {
+        pctReturns.push(((windowQuotes[i] - prev) / prev) * 100);
+      }
+    }
+    if (pctReturns.length > 1) {
+      const retMean = pctReturns.reduce((s, r) => s + r, 0) / pctReturns.length;
+      const retVar =
+        pctReturns.reduce((s, r) => s + Math.pow(r - retMean, 2), 0) / (pctReturns.length - 1);
+      tickVolatility = Math.sqrt(Math.max(0, retVar));
+    } else if (pctReturns.length === 1) {
+      tickVolatility = Math.abs(pctReturns[0]);
+    }
+  }
+
   return {
     symbol,
     windowSize: n,
@@ -274,5 +311,8 @@ export function runStatisticalAnalysis(
     comparison50v200: compareWindows(allDigits, 50, 200),
     shannonEntropy,
     normalizedEntropy: maxEntropy > 0 ? shannonEntropy / maxEntropy : 0,
+    frequencyStdDev,
+    quoteStdDev,
+    tickVolatility,
   };
 }

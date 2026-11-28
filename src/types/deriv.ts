@@ -30,11 +30,35 @@ export type ConnectionState =
   | 'reconnecting'
   | 'error';
 
+export type AccountMode = 'public' | 'demo' | 'real';
+
+export interface DerivAccountSummary {
+  loginid: string;
+  accountType: 'demo' | 'real';
+  currency: string;
+  isDisabled: boolean;
+}
+
+export interface AccountSessionInfo {
+  mode: AccountMode;
+  isAuthorized: boolean;
+  isAuthorizing: boolean;
+  loginid: string | null;
+  actualAccountType: 'demo' | 'real' | null;
+  currency: string | null;
+  balance: number | null;
+  email: string | null;
+  accounts: DerivAccountSummary[];
+  authError: string | null;
+}
+
 export interface ConnectionStatusInfo {
   state: ConnectionState;
   appId: string;
   endpoint: string;
   lastMessageAt: number | null;
+  lastLiveTickAt: number | null;
+  liveTickCount: number;
   reconnectAttempt: number;
   errorMessage: string | null;
   validatedSymbolCount: number;
@@ -106,6 +130,9 @@ export interface StatisticalAnalysisResult {
   comparison50v200: WindowComparison | null;
   shannonEntropy: number; // Max is log2(10) ≈ 3.3219 bits
   normalizedEntropy: number; // 0 to 1
+  frequencyStdDev: number; // Std dev of digit percentages (0-9) around 10%
+  quoteStdDev: number; // Sample std dev of quote prices in window
+  tickVolatility: number; // Std dev of tick-to-tick percentage returns (%)
 }
 
 export interface MarkovTransition {
@@ -197,6 +224,7 @@ export interface QuantSignal {
   modelAgreementScore: number; // 0 to 1 (how many independent models agree)
   modelsSupporting: string[];
   statisticalReliability: SignalQualityTier;
+  confidenceScore: number; // 0 to 100 (%) derived from statistical std dev & volatility
   evidenceSummary: string;
   generatedAt: number; // ms timestamp
   anchorTickEpoch: number;
@@ -217,6 +245,7 @@ export interface SignalRecord {
   sampleSize: number;
   windowUsed: number;
   reliabilityTier: SignalQualityTier;
+  confidenceScore?: number; // 0 to 100 (%)
   modelUsed: string;
   generatedAt: number;
   anchorTickEpoch: number;
@@ -241,6 +270,7 @@ export interface PerformanceSummary {
   correctCount: number;
   incorrectCount: number;
   accuracyPct: number;
+  avgConfidenceScore: number | null;
   byCategory: PerformanceBreakdownItem[];
   byMarket: PerformanceBreakdownItem[];
   byWindow: PerformanceBreakdownItem[];
@@ -294,6 +324,7 @@ export interface ChartVisibilityConfig {
 
 export interface UserSettings {
   appId: string;
+  accountMode: AccountMode;
   selectedMarket: MarketSymbol;
   theme: 'light' | 'dark';
   tickHistorySize: number;
@@ -311,6 +342,33 @@ export interface UserSettings {
   signalCardOrder: SignalCategory[];
   chartVisibility: ChartVisibilityConfig;
   thresholds: ClassificationThresholds;
+}
+
+export interface AIDigitPrediction {
+  symbol: MarketSymbol;
+  generatedAt: number;
+  model: string;
+  predictedDigit: number;
+  runnerUpDigit: number;
+  differsAvoidDigit: number;
+  recommendedCategory: SignalCategory;
+  parityBias: 'EVEN' | 'ODD' | 'NEUTRAL';
+  aiConfidenceScore: number;
+  confidenceTier: string;
+  volatilityRegime: string;
+  rationale: string;
+  riskFactors: string[];
+}
+
+export interface DigitConfidenceBreakdown {
+  digit: number;
+  confidenceScore: number;
+  empiricalPct: number;
+  zScore: number;
+  markovProbPct: number;
+  markovLift: number;
+  momentumDelta: number;
+  ticksSinceLast: number;
 }
 
 export interface EngineDiagnosticResult {

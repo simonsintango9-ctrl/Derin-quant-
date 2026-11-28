@@ -12,7 +12,7 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
-import { SUPPORTED_MARKETS } from './constants/markets';
+import { DERIV_WS_ENDPOINT, MARKET_MAP, SUPPORTED_MARKETS } from './constants/markets';
 import { ActiveSymbolInfo, DerivConnectionEngine } from './engines/connectionEngine';
 import { runMarkovAnalysis } from './engines/markovEngine';
 import {
@@ -38,6 +38,9 @@ import {
 } from './engines/storageEngine';
 import { TickDataEngine } from './engines/tickDataEngine';
 import {
+  AccountMode,
+  AccountSessionInfo,
+  AIDigitPrediction,
   ConnectionStatusInfo,
   MarketSymbol,
   QuantSignal,
@@ -78,13 +81,32 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatusInfo>({
     state: 'disconnected',
     appId: settings.appId,
-    endpoint: 'wss://ws.derivws.com/websockets/v3',
+    endpoint: DERIV_WS_ENDPOINT,
     lastMessageAt: null,
+    lastLiveTickAt: null,
+    liveTickCount: 0,
     reconnectAttempt: 0,
     errorMessage: null,
     validatedSymbolCount: 0,
     latencyMs: null,
   });
+
+  const [accountSession, setAccountSession] = useState<AccountSessionInfo>({
+    mode: 'public',
+    isAuthorized: false,
+    isAuthorizing: false,
+    loginid: null,
+    actualAccountType: null,
+    currency: null,
+    balance: null,
+    email: null,
+    accounts: [],
+    authError: null,
+  });
+
+  const [aiPrediction, setAiPrediction] = useState<AIDigitPrediction | null>(null);
+  const [isPredicting, setIsPredicting] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
 
   const tickEngineRef = useRef<TickDataEngine>(new TickDataEngine(settings.tickHistorySize));
   const connectionRef = useRef<DerivConnectionEngine | null>(null);
@@ -150,6 +172,12 @@ export default function App() {
       {
         onStatusChange: (status) => {
           setConnectionStatus(status);
+          if (status.state === 'connected') {
+            setNotification((prev) => (prev?.type === 'error' ? null : prev));
+          }
+        },
+        onAccountChange: (account) => {
+          setAccountSession(account);
         },
         onActiveSymbolsValidated: (validated) => {
           setValidatedSymbols(validated);
@@ -455,7 +483,7 @@ export default function App() {
           setScannerSummaries((prev) =>
             prev.map((s) => (s.symbol === market.symbol ? { ...s, status: 'scanning' } : s))
           );
-          const history = await conn.fetchSnapshotHistory(market.symbol, 200);
+          const history = await conn.fetchSnapshotHistory(market.symbol, 100);
           const merged = tickEngineRef.current.mergeHistory(market.symbol, history);
           setScannerSummaries((prev) =>
             prev.map((s) =>
@@ -479,9 +507,12 @@ export default function App() {
                 : s
             )
           );
+          if (msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('limit')) {
+            break;
+          }
         }
 
-        await new Promise((r) => window.setTimeout(r, 260));
+        await new Promise((r) => window.setTimeout(r, 800));
       }
       setLastScanAt(Date.now());
     } finally {
@@ -495,7 +526,7 @@ export default function App() {
 
     const initialTimer = window.setTimeout(() => {
       void runMarketScan();
-    }, 2500);
+    }, 4500);
 
     const intervalTimer = window.setInterval(() => {
       void runMarketScan();
@@ -512,6 +543,8 @@ export default function App() {
       if (nextMarket === settings.selectedMarket) return;
       setSettings((prev) => ({ ...prev, selectedMarket: nextMarket }));
       setScannedCards({});
+      setAiPrediction(null);
+      setAiError(null);
 
       const cached = await loadMarketTicks(nextMarket);
       if (cached.length > 0) {
@@ -531,6 +564,92 @@ export default function App() {
     [settings.selectedMarket, settings.tickHistorySize, pushToast]
   );
 
+  const handleAuthorizeAccount = useCallback(
+    async (mode: AccountMode, token: string) => {
+      if (!connectionRef.current) return;
+      await connectionRef.current.setAccountCredentials(mode, token);
+    },
+    []
+  );
+
+  const handleDisconnectAccount = useCallback(() => {
+    if (!connectionRef.current) return;
+    void connectionRef.current.setAccountCredentials('public', null);
+  }, []);
+
+  const handleRunAIPrediction = useCallback(async () => {
+    if (stats.windowSize === 0 || isPredicting) return;
+    setIsPredicting(true);
+    setAiError(null);
+
+    try {
+      const response = await fetch('/api/ai/digit-prediction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: settings.selectedMarket,
+          marketName: MARKET_MAP[settings.selectedMarket].name,
+          windowSize: stats.windowSize,
+          analysisMode: settings.analysisMode,
+          analysisDurationSeconds: settings.analysisDurationSeconds,
+          recentDigits: activeTicks.slice(-30).map((t) => t.lastDigit),
+          currentLastDigit:
+            activeTicks.length > 0 ? activeTicks[activeTicks.length - 1].lastDigit : null,
+          frequencyStdDev: stats.frequencyStdDev,
+          quoteStdDev: stats.quoteStdDev,
+          tickVolatility: stats.tickVolatility,
+          chiSquareStatistic: probability.chiSquareStatistic,
+          chiSquarePValue: probability.chiSquarePValue,
+          normalizedEntropy: stats.normalizedEntropy,
+          digitMetrics: stats.digits.map((d) => ({
+            digit: d.digit,
+            percentage: d.percentage,
+            zScore: d.zScore,
+            momentumDelta: d.momentumDelta,
+            ticksSinceLast: d.ticksSinceLast,
+          })),
+          markovConditionals: markov.conditionalFromCurrent.map((c) => ({
+            toDigit: c.toDigit,
+            smoothedProbability: c.smoothedProbability,
+            liftOverUniform: c.liftOverUniform,
+          })),
+          signalConfidences: {
+            MATCHES: liveSignals.MATCHES?.confidenceScore ?? null,
+            DIFFERS: liveSignals.DIFFERS?.confidenceScore ?? null,
+            EVEN: liveSignals.EVEN?.confidenceScore ?? null,
+            ODD: liveSignals.ODD?.confidenceScore ?? null,
+          },
+        }),
+      });
+
+      const payload = (await response.json()) as AIDigitPrediction & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || `AI prediction request failed (${response.status})`);
+      }
+
+      setAiPrediction(payload);
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Unable to complete AI digit prediction.';
+      setAiError(msg);
+      pushToast('error', msg);
+    } finally {
+      setIsPredicting(false);
+    }
+  }, [
+    stats,
+    isPredicting,
+    settings.selectedMarket,
+    settings.analysisMode,
+    settings.analysisDurationSeconds,
+    activeTicks,
+    probability.chiSquareStatistic,
+    probability.chiSquarePValue,
+    markov.conditionalFromCurrent,
+    liveSignals,
+    pushToast,
+  ]);
+
   const handleToggleConnection = () => {
     const conn = connectionRef.current;
     if (!conn) return;
@@ -540,6 +659,8 @@ export default function App() {
       connectionStatus.state === 'reconnecting'
     ) {
       conn.disconnect();
+    } else if (connectionStatus.state === 'error') {
+      conn.reconnectNow(settings.selectedMarket);
     } else {
       conn.connect(settings.selectedMarket);
     }
@@ -572,6 +693,7 @@ export default function App() {
       'sampleSize',
       'windowUsed',
       'reliabilityTier',
+      'confidenceScore',
       'generatedAt',
       'anchorTickEpoch',
       'actualNextDigit',
@@ -589,6 +711,7 @@ export default function App() {
         r.sampleSize,
         r.windowUsed,
         `"${r.reliabilityTier}"`,
+        r.confidenceScore ?? '',
         new Date(r.generatedAt).toISOString(),
         r.anchorTickEpoch,
         r.actualNextDigit ?? '',
@@ -776,12 +899,17 @@ export default function App() {
           <TerminalView
             market={settings.selectedMarket}
             connection={connectionStatus}
+            accountSession={accountSession}
             ticks={activeTicks}
             stats={stats}
+            markov={markov}
             probability={probability}
             liveSignals={liveSignals}
             scannedCards={scannedCards}
             settings={settings}
+            aiPrediction={aiPrediction}
+            isPredicting={isPredicting}
+            aiError={aiError}
             onSelectMarket={(sym) => void handleMarketSwitch(sym)}
             onChangeAnalysisMode={(mode) =>
               setSettings((prev) => ({ ...prev, analysisMode: mode }))
@@ -829,6 +957,12 @@ export default function App() {
             onReconnectNow={() =>
               connectionRef.current?.reconnectNow(settings.selectedMarket)
             }
+            onRestartTickStream={() =>
+              void connectionRef.current?.resubscribeTicks()
+            }
+            onAuthorizeAccount={handleAuthorizeAccount}
+            onDisconnectAccount={handleDisconnectAccount}
+            onRunAIPrediction={() => void handleRunAIPrediction()}
             onSwitchToLab={() => setActiveTab('analysis')}
           />
         )}
@@ -870,7 +1004,10 @@ export default function App() {
         {activeTab === 'settings' && (
           <SettingsView
             settings={settings}
+            accountSession={accountSession}
             onUpdateSettings={setSettings}
+            onAuthorizeAccount={handleAuthorizeAccount}
+            onDisconnectAccount={handleDisconnectAccount}
             onExportTicksJson={handleExportTicksJson}
             onExportSignalsCsv={handleExportSignalsCsv}
             onClearStoredData={() => void handleClearStoredData()}

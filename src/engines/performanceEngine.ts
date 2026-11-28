@@ -17,6 +17,7 @@ export function createPendingSignalRecord(signal: QuantSignal): SignalRecord {
     sampleSize: signal.sampleSize,
     windowUsed: signal.windowUsed,
     reliabilityTier: signal.statisticalReliability,
+    confidenceScore: signal.confidenceScore,
     modelUsed: signal.modelName,
     generatedAt: signal.generatedAt,
     anchorTickEpoch: signal.anchorTickEpoch,
@@ -146,13 +147,23 @@ export function computePerformanceSummary(records: SignalRecord[]): PerformanceS
     };
   });
 
+  const scored = records.filter(
+    (r): r is SignalRecord & { confidenceScore: number } =>
+      typeof r.confidenceScore === 'number' && Number.isFinite(r.confidenceScore)
+  );
+  const avgConfidenceScore =
+    scored.length > 0
+      ? Math.round(scored.reduce((sum, r) => sum + r.confidenceScore, 0) / scored.length)
+      : null;
+
   return {
     totalRecorded: records.length,
     evaluatedCount: evaluated.length,
     pendingCount: pending.length,
-    correctCount,
-    incorrectCount,
+    correctCount: correctCount,
+    incorrectCount: incorrectCount,
     accuracyPct,
+    avgConfidenceScore,
     byCategory,
     byMarket,
     byWindow,
